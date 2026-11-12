@@ -128,7 +128,7 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     );
   };
 
-  /** Docker Desktop 29.4.3 的虚拟机里量到的值（2026-11-10），napbox 照着设（DESIGN.md 第 2 节「文件监听的上限」） */
+  /** Docker Desktop 29.4.3 的虚拟机里量到的值（2026-11-10），napbox 照着设 */
   const DOCKER_DESKTOP_INOTIFY_LIMITS = { max_user_watches: 1048576, max_user_instances: 8192, max_queued_events: 16384 };
   /** 虚拟机里文件监听的三个上限：容器和虚拟机用的是同一份 */
   async function inotifyLimits() {
@@ -139,7 +139,7 @@ describe("调用方持有的环境", { concurrency: false }, () => {
   }
 
   /**
-   * 虚拟机的时钟落在本机时间的范围里（DESIGN.md 第 2 节「虚拟机时钟」）：量 5 次，取往返最短的一次，
+   * 虚拟机的时钟落在本机时间的范围里：量 5 次，取往返最短的一次，
    * 虚拟机读到的时间要在发出命令和拿到结果之间，前后各放 5 毫秒。框架开机 30 秒后才第一次对时，
    * 在那之前差几毫秒到一百多毫秒，所以这条要在开机后 30 秒内跑
    */
@@ -355,7 +355,7 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     }
   });
 
-  test("exec：自己用 setsid 脱离的进程不在取消范围里（DESIGN 写明的边界），能手动结束", async () => {
+  test("exec：自己用 setsid 脱离的进程不在取消范围里（已知的边界），能手动结束", async () => {
     const marker = newMarker();
     const controller = new AbortController();
     const running = run("app", ["sh", "-c", `setsid sleep ${marker}; echo done`], { signal: controller.signal });
@@ -1432,7 +1432,7 @@ describe("源码挂载：宿主机改完马上 exec", { concurrency: false }, ()
   const read = (file: string) => execIn(client, target, "box", ["cat", `/src/${file}`]);
   const rounds = 30;
 
-  /** 每轮都是：容器里刚读过，宿主机改，马上再读（不清缓存时几乎每轮都错，见 DESIGN.md 第 2 节） */
+  /** 每轮都是：容器里刚读过，宿主机改，马上再读（不清缓存时几乎每轮都错） */
   async function expectFresh(file: string, write: (full: string, text: string, k: number) => void, text: (k: number) => string) {
     const full = path.join(src, file);
     write(full, "seed", -1);
@@ -1484,7 +1484,7 @@ describe("源码挂载：宿主机改完马上 exec", { concurrency: false }, ()
     }
   });
 
-  test("文件被容器里的进程打开着（DESIGN 写明的边界）：清不掉，等约 1 秒后读到新内容", async () => {
+  test("文件被容器里的进程打开着（已知的边界）：清不掉，等约 1 秒后读到新内容", async () => {
     const full = path.join(src, "held.txt");
     writeFileSync(full, "old");
     await execIn(client, target, "box", ["sh", "-c", "(exec 3</src/held.txt; sleep 30) >/dev/null 2>&1 &"]);

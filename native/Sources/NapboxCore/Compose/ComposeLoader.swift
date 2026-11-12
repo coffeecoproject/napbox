@@ -21,7 +21,7 @@ public struct ComposeInput: Sendable {
     }
 }
 
-/// napbox run 要在前台跑的那个服务（DESIGN.md 第 9 节「napbox run」）。规则和 docker compose run 一样：
+/// napbox run 要在前台跑的那个服务。规则和 docker compose run 一样：
 /// 只起它和它依赖的服务，它的 profile 跟着启用，不给它分配宿主机端口。
 public struct ComposeRun: Sendable {
     public var service: String
@@ -84,7 +84,7 @@ public enum ComposeLoader {
     }
 }
 
-/// 没指定 compose 文件时去哪找（DESIGN.md 第 9 节）。
+/// 没指定 compose 文件时去哪找。
 public enum ComposeFiles {
     /// 和 compose 一样的文件名和顺序；同一目录里有 override 文件时自动合并在后面。
     static let names = ["compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"]

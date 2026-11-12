@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// checkGateway：网关在不在这台虚拟机的网络上（DESIGN.md 第 2 节「和苹果 container 同时开着」）。napboxd 给虚拟机
+// checkGateway：网关在不在这台虚拟机的网络上。napboxd 给虚拟机
 // 写死了宿主机那个网段的地址和网关；系统把虚拟机放进别的网段时，网关就不在同一个网络上，DNS 和出网都不通。
 // 往网关发一个 UDP 包让内核去做 ARP，再看 /proc/net/arp 里网关有没有解析出 MAC。只看二层：不经宿主机的 DNS
 // 和 Clash，答得快、不误判。

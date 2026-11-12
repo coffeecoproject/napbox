@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// 端口转发的虚拟机这一头（DESIGN.md 第 5 节）：napboxd 从 vsock 连进来，所有转发的连接都复用这一条（mux.go）。
+// 端口转发的虚拟机这一头：napboxd 从 vsock 连进来，所有转发的连接都复用这一条（mux.go）。
 // 走 vsock 不经过本地网络：登录项运行的 napboxd 直接连虚拟机的 IP 要用户批准 macOS 的
 // “本地网络”权限，开着 Clash 时还可能被它接管。目标是服务自己的地址（network.go），从虚拟机的网络连过去：
 // 服务看到的和 Docker 端口转发一样不是本机连接，pg_hba 这类规则不会因此放行。

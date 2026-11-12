@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// 垫在 vminitd 和 runc 中间的一层（DESIGN.md 第 6 节「每个服务自己的网络」）。同一个程序换个名字放在一块单独的盘上，
+// 垫在 vminitd 和 runc 中间的一层。同一个程序换个名字放在一块单独的盘上，
 // 旁边是真的 runc 和 net.json；napboxd 让 vminitd 用它来启动容器（LinuxPod 的 ociRuntimePath），vminitd 以为自己在叫 runc。
 //
 // 只管一件事：建服务的容器（create）时给它一个自己的网络。先在容器的配置里加上网络命名空间，让 runc 把容器建出来

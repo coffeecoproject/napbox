@@ -327,7 +327,7 @@ import NapboxProtocol
         #expect(!locks.lockedPorts.contains(range.lowerBound + 3))
     }
 
-    /// 换 profile 再 up：没启用的服务的端口也留着，来回切都是同一个；对外只有启用的（DESIGN.md 第 5 节）
+    /// 换 profile 再 up：没启用的服务的端口也留着，来回切都是同一个；对外只有启用的
     @Test func switchingProfilesKeepsPorts() throws {
         let files = ["compose.yaml": """
         services:

@@ -1,4 +1,4 @@
-// 出网规则的内容（DESIGN.md 第 6 节）：open 模式放行哪个 DNS、挡哪些网段和地址。napbox-guard 只按参数加规则，
+// 出网规则的内容：open 模式放行哪个 DNS、挡哪些网段和地址。napbox-guard 只按参数加规则，
 // 挡什么由这里决定。
 import Foundation
 import NapboxProtocol

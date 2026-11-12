@@ -1,4 +1,4 @@
-// 临时环境（DESIGN.md 第 3 节）：同一个 worktree 里，开发环境之外另起的环境，给测试用，用完销毁。
+// 临时环境：同一个 worktree 里，开发环境之外另起的环境，给测试用，用完销毁。
 import Foundation
 import NapboxProtocol
 

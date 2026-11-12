@@ -65,7 +65,7 @@ import chokidar from 'chokidar';
 import { appendFile, readFileSync } from 'node:fs';
 // 事件先攒在内存里，后台一批一批写，处理事件时不同步写挂载目录。同步写的话每条事件都要等一次写盘，
 // 还各引出一次宿主机通知，chokidar 读一次 2000 个文件的目录会慢两三倍；超过 1 秒就撞上 chokidar 自己的毛病
-// （两次读目录重叠，把刚加的文件误报成删除，见 DESIGN 第 2 节“文件变化通知和 develop.watch 实测”）
+// （两次读目录重叠，把刚加的文件误报成删除）
 const pending = [];
 let writing = false;
 const flush = () => {

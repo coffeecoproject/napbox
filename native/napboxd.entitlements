@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- 自己签名时只能带这一项；多带 com.apple.vm.networking 会被系统直接杀掉（DESIGN.md 第 2 节）。 -->
+	<!-- 自己签名时只能带这一项；多带 com.apple.vm.networking 会被系统直接杀掉。 -->
 	<key>com.apple.security.virtualization</key>
 	<true/>
 </dict>

@@ -1,4 +1,4 @@
-// napbox setup（DESIGN.md 第 4 节）：把后台程序放到固定位置，准备内核和 vminit，注册成登录项并启动。
+// napbox setup：把后台程序放到固定位置，准备内核和 vminit，注册成登录项并启动。
 // 不放在 npm 或 npx 的目录里运行：那些目录会变、会被清理，登录项要一直找得到程序。
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -174,7 +174,7 @@ function launchAgent(daemon: string): string {
   </dict>
 `
     : "";
-  // ProcessType：不写时 launchd 会限速，虚拟机跟着慢（DESIGN.md 第 2 节）。Interactive 和普通 app 一样不限。
+  // ProcessType：不写时 launchd 会限速，虚拟机跟着慢。Interactive 和普通 app 一样不限。
   // KeepAlive：崩溃了拉起来；正常退出（退出码 0）不拉，比如 launchctl bootout。
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

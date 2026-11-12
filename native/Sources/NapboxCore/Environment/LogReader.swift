@@ -1,4 +1,4 @@
-// 服务日志文件的读取：napbox logs 默认只看最后几行（DESIGN.md 第 9 节），日志文件可能很大，从后往前找。
+// 服务日志文件的读取：napbox logs 默认只看最后几行，日志文件可能很大，从后往前找。
 import Foundation
 
 public enum LogReader {

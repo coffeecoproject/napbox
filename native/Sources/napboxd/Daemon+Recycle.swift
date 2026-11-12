@@ -1,4 +1,4 @@
-// 回收：napbox down、worktree 删掉后自动回收、清理保留期满的数据（DESIGN.md 第 9、12 节）。
+// 回收：napbox down、worktree 删掉后自动回收、清理保留期满的数据。
 import Foundation
 import NIOCore
 import NapboxCore
@@ -8,7 +8,7 @@ import NapboxRuntime
 extension Daemon {
     // MARK: - down
 
-    /// 回收环境：停掉服务、不再监听、释放端口、删掉登记；数据卷移到 recycled 目录保留 7 天（DESIGN.md 第 12 节）。
+    /// 回收环境：停掉服务、不再监听、释放端口、删掉登记；数据卷移到 recycled 目录保留 7 天。
     /// 临时环境的数据直接删掉。调用方按名字销毁时也走这里。
     func down(_ params: EnvironmentParams) async throws(NapboxError) -> DownResult {
         let queued = try await record(for: params.target)
@@ -56,7 +56,7 @@ extension Daemon {
         }
     }
 
-    // MARK: - 临时环境停下来就销毁（DESIGN.md 第 9 节「临时环境」）
+    // MARK: - 临时环境停下来就销毁
 
     /// 临时环境不该再留着了（闲置、起不来、虚拟机没了）：销毁。调用时已经排在这个环境的队列里。
     /// 销毁不了（napboxd 正在退出、数据删不掉）时登记还在，napboxd 下次启动时再销毁（destroyLeftoverTemporaries）。
@@ -90,8 +90,8 @@ extension Daemon {
 
     // MARK: - worktree 删除后自动回收
 
-    /// worktree 持有的环境，worktree 删掉了就回收（和 down 一样，数据保留 7 天）。调用方持有的环境不管
-    /// （DESIGN.md 第 3 节）。git 查不了的这次跳过，下次再查。
+    /// worktree 持有的环境，worktree 删掉了就回收（和 down 一样，数据保留 7 天）。调用方持有的环境不管。
+    /// git 查不了的这次跳过，下次再查。
     func reclaimDeletedWorktrees() async {
         let candidates = store.state.environments.compactMap { r -> (String, String, String)? in
             guard r.owner == .worktree, let main = r.mainRepository else { return nil }

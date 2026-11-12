@@ -1,4 +1,4 @@
-// 端口监听和转发、唤醒、休眠（DESIGN.md 第 6、7 节）。
+// 端口监听和转发、唤醒、休眠。
 import Foundation
 import NIOCore
 import NapboxCore
@@ -94,7 +94,7 @@ extension Daemon {
 
     // MARK: - 唤醒和休眠
 
-    /// 连接或 exec 触发的唤醒：用登记里固定下来的定义把环境起来，已经跑完的一次性服务不再启动（DESIGN.md 第 7 节）。
+    /// 连接或 exec 触发的唤醒：用登记里固定下来的定义把环境起来，已经跑完的一次性服务不再启动。
     func wake(_ name: String) async throws(NapboxError) {
         try await serialized(name) { () throws(NapboxError) in try await self.wakeNow(name, cooldown: true) }
     }
@@ -131,7 +131,7 @@ extension Daemon {
         }
     }
 
-    /// 手动休眠（napbox sleep、调用方）。临时环境没有休眠（DESIGN.md 第 9 节「临时环境」）。
+    /// 手动休眠（napbox sleep、调用方）。临时环境没有休眠。
     func sleep(_ params: EnvironmentParams) async throws(NapboxError) -> EnvironmentInfo {
         let record = try await record(for: params.target)
         if record.temporary != nil {
@@ -142,7 +142,7 @@ extension Daemon {
     }
 
     /// 闲置的环境休眠：代理上 N 分钟没有数据往来、没有 napbox exec 或 logs -f 在跑，而且没有服务设置
-    /// keep_awake（DESIGN.md 第 7 节）。临时环境闲置了是销毁：脚本中途断了留下的不会一直占着。
+    /// keep_awake。临时环境闲置了是销毁：脚本中途断了留下的不会一直占着。
     func sleepIdleEnvironments() async {
         let now = Date()
         for name in running.keys {
@@ -160,7 +160,7 @@ extension Daemon {
         }
     }
 
-    /// 虚拟机意外没了（DESIGN.md 第 7 节）：转成休眠，和正常休眠走同一条路（断开连接、记下跑完的一次性服务、释放资源、发事件）。
+    /// 虚拟机意外没了：转成休眠，和正常休眠走同一条路（断开连接、记下跑完的一次性服务、释放资源、发事件）。
     /// 不主动重启：用到时才起，反复崩溃也不会自己循环。原因记进 lastFailure，status 里看得到，冷却期内不自动唤醒。
     /// 临时环境是销毁。
     func vmLost(_ name: String, _ env: RunningEnvironment) async {

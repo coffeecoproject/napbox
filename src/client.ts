@@ -1,4 +1,4 @@
-// 调用 napboxd 本地 socket 的客户端，协议见 DESIGN.md 第 4、9 节。
+// 调用 napboxd 本地 socket 的客户端。协议类型和 native/Sources/NapboxProtocol/Protocol.swift 一一对应。
 //
 // 约定（测试在 test/client.test.ts、test/vm.test.ts）：
 // - 每次调用一个连接。一个连接上的请求是排队处理的，up 可能要很久，不能共用。
@@ -106,7 +106,7 @@ export interface ExecOptions {
 }
 
 export interface SubscribeOptions extends SubscribeParams {
-  /** 订阅生效了，从这以后的事件都会送到。在这里查 status、runs，中间不会漏（DESIGN.md 第 9 节） */
+  /** 订阅生效了，从这以后的事件都会送到。在这里查 status、runs，中间不会漏 */
   onSubscribed?: () => void | Promise<void>;
   onEvent: (event: EnvironmentEvent) => void | Promise<void>;
   /** 不再订阅时用它取消 */

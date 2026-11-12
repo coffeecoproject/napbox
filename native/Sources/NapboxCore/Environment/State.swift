@@ -19,7 +19,7 @@ public struct NapboxState: Codable, Equatable, Sendable {
         environment(name) ?? environments.first { $0.name.hasPrefix(name + "/") }
     }
 
-    /// worktree 持有的环境名：`项目/worktree`，主工作区是 `项目/main`；临时环境在后面再加一段 `/临时名`（DESIGN.md 第 3 节）。
+    /// worktree 持有的环境名：`项目/worktree`，主工作区是 `项目/main`；临时环境在后面再加一段 `/临时名`。
     /// 同一个 worktree 一直用同一个名字；项目名取主仓库目录名的小写，和别的仓库撞名时加 -2、-3。
     public func environmentName(for location: WorktreeLocation, temporary: String? = nil) -> String {
         let base = baseName(for: location)
@@ -64,7 +64,7 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     public enum Owner: Codable, Equatable, Sendable {
         /// 在 worktree 里 napbox up 创建，worktree 删除后 napbox 自动回收
         case worktree
-        /// 调用方（如 CodeOS）创建，只能由调用方操作和回收（DESIGN.md 第 3 节）
+        /// 调用方（如 CodeOS）创建，只能由调用方操作和回收
         case caller(id: String)
 
         /// 调用方持有时是持有方标识
@@ -82,15 +82,15 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     public var owner: Owner
     /// 分配的宿主机端口，包括没启用的 profile 里的服务留着的（definition.reservedPorts）。对外用 activePorts
     public var ports: [PortAssignment]
-    /// 虚拟机在系统 NAT 网段里的固定 IP（DESIGN.md 第 6 节）
+    /// 虚拟机在系统 NAT 网段里的固定 IP
     public var ip: String?
     /// up 时解析好的 compose，之后唤醒都用这一份，直到下次 up
     public var definition: ComposeProject?
-    /// 已经成功跑完的一次性服务：唤醒时加进 pod 但不启动（DESIGN.md 第 7 节）
+    /// 已经成功跑完的一次性服务：唤醒时加进 pod 但不启动
     public var completedServices: [String]
-    /// 出网模式：新环境是 open；在运行时切换马上生效，休眠时切换下次唤醒生效（DESIGN.md 第 6 节）
+    /// 出网模式：新环境是 open；在运行时切换马上生效，休眠时切换下次唤醒生效
     public var egress: EgressMode
-    /// 临时环境的名字（DESIGN.md 第 3 节）；nil 是普通环境。临时环境不休眠，停下来就直接销毁
+    /// 临时环境的名字；nil 是普通环境。临时环境不休眠，停下来就直接销毁
     public var temporary: String?
 
     public init(name: String, project: String?, mainRepository: String?, worktree: String, owner: Owner, ports: [PortAssignment] = [],
@@ -109,7 +109,7 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
         self.temporary = temporary
     }
 
-    /// 启用的服务的端口：转发、列出、写进 ports.json。其余只是锁着留给没启用的 profile，连上来直接断开（DESIGN.md 第 5 节）
+    /// 启用的服务的端口：转发、列出、写进 ports.json。其余只是锁着留给没启用的 profile，连上来直接断开
     public var activePorts: [PortAssignment] {
         ports.filter { definition?.service($0.service)?.ports.contains($0.containerPort) == true }
     }

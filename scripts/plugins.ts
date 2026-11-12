@@ -48,7 +48,7 @@ function pluginFiles(version: string, launch: Launch): Record<string, string> {
       license: "Apache-2.0",
       keywords: ["docker-compose", "worktree", "dev-environment", "mcp", "macos"],
     }),
-    // alwaysLoad：工具列表每一轮都在，不用先搜索（DESIGN.md 第 4 节）
+    // alwaysLoad：工具列表每一轮都在，不用先搜索
     ".mcp.json": json({ mcpServers: { napbox: { ...launch.server, alwaysLoad: true } } }),
     "hooks/hooks.json": hooks(launch.hook),
   };

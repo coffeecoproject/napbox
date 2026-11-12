@@ -1,4 +1,4 @@
-// develop.watch（DESIGN.md 第 8 节）：compose 里写了就生效。环境在跑时听宿主机的变化，攒一下按规则同步、重建、重启；
+// develop.watch：compose 里写了就生效。环境在跑时听宿主机的变化，攒一下按规则同步、重建、重启；
 // 环境起好时先补上它没跑的这段时间的变化，所以休眠期间改的文件唤醒后也是新的。
 import Foundation
 import NapboxCore

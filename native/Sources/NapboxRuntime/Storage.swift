@@ -1,6 +1,6 @@
-// napbox 在 ~/Library/Application Support/napbox/ 下放环境数据的位置（DESIGN.md 第 4 节）：
+// napbox 在 ~/Library/Application Support/napbox/ 下放环境数据的位置：
 // environments/<环境 ID>/ 是各环境的根文件系统、数据卷和日志（里面的结构见 EnvironmentLayout），
-// recycled/ 是回收后保留 7 天的数据（DESIGN.md 第 12 节），builder/ 是构建引擎、构建缓存和构建日志。
+// recycled/ 是回收后保留 7 天的数据，builder/ 是构建引擎、构建缓存和构建日志。
 import Foundation
 import NapboxCore
 import NapboxProtocol
@@ -53,7 +53,7 @@ struct Storage: Sendable {
         try moveToRecycled(environmentDirectory(record), keptAt: nil, record: record, label: nil, reason: reason)
     }
 
-    /// 临时环境销毁：整个环境目录直接删掉，不保留（DESIGN.md 第 9 节「临时环境」）。
+    /// 临时环境销毁：整个环境目录直接删掉，不保留。
     func deleteEnvironment(_ record: EnvironmentRecord) throws(NapboxError) {
         let directory = environmentDirectory(record)
         guard FileManager.default.fileExists(atPath: directory.path) else { return }

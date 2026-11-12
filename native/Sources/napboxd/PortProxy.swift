@@ -1,4 +1,4 @@
-// 宿主机端口代理（DESIGN.md 第 5、7 节）：环境从登记到回收，napboxd 一直在它的端口上接受连接。
+// 宿主机端口代理：环境从登记到回收，napboxd 一直在它的端口上接受连接。
 // 环境在运行就直接转发（RelayMux）；在休眠就先暂存连接（不读数据，数据留在 socket 里），唤醒、就绪后再转发。
 import Foundation
 import NIOConcurrencyHelpers
@@ -36,7 +36,7 @@ private final class AcceptedHandler: ChannelInboundHandler, RemovableChannelHand
     }
 }
 
-/// 每个环境最后一次有数据往来的时间（DESIGN.md 第 7 节：闲置指代理上没有数据往来），
+/// 每个环境最后一次有数据往来的时间（闲置指代理上没有数据往来），
 /// 以及正在跑的 napbox exec、napbox logs -f 和正在建立的转发：有它们在时环境不算闲置。
 final class ActivityBoard: Sendable {
     private let last = NIOLockedValueBox<[String: Date]>([:])
@@ -60,7 +60,7 @@ final class ActivityBoard: Sendable {
     func isHeld(_ name: String) -> Bool { holds.withLockedValue { ($0[name] ?? 0) > 0 } }
 }
 
-/// 每个环境正在转发的连接：休眠时全部断开（DESIGN.md 第 7 节）。
+/// 每个环境正在转发的连接：休眠时全部断开。
 final class ConnectionBoard: Sendable {
     private let open = NIOLockedValueBox<[String: [ObjectIdentifier: Channel]]>([:])
 

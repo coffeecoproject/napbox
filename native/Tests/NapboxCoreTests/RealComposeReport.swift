@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import NapboxCore
 
-/// 用本机真实项目的 compose 核对支持范围（DESIGN.md 第 8 节）。只读，不改项目文件。
+/// 用本机真实项目的 compose 核对支持范围。只读，不改项目文件。
 /// 只在设置了 NAPBOX_COMPOSE_SAMPLES 时运行，值是一个列表文件，每行：
 ///   文件1[,文件2...] [| KEY=VALUE ...]
 /// 输出每组的解析结果；期望写在列表文件里：行尾 `=> ok` 表示应能解析，`=> 问题片段` 表示应报出包含该片段的问题。

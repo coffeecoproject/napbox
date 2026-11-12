@@ -5,7 +5,7 @@ import Foundation
 import NapboxCore
 import NapboxProtocol
 
-/// napbox run 在前台跑的那个服务：标准输入从命令行转过来，输出除了写日志也原样转回去（DESIGN.md 第 9 节「napbox run」）。
+/// napbox run 在前台跑的那个服务：标准输入从命令行转过来，输出除了写日志也原样转回去。
 public struct ForegroundService: Sendable {
     public let service: String
     /// 结束时关掉服务的标准输入
@@ -79,7 +79,7 @@ struct ContainerPlan: Sendable {
                     try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
                 }
                 // 只读做在容器这一层，不做在虚拟机的共享上（和 Docker 一样靠挂载，服务没有权限重新挂载）：框架里同一个目录
-                // 只共享一次，只读的话网络小容器也发不出文件变化通知（DESIGN.md 第 8 节）
+                // 只共享一次，只读的话网络小容器也发不出文件变化通知
                 extra.append(.share(source: path, destination: v.target, options: []))
                 if v.readOnly { readOnlySources.append(v.target) }
             }
@@ -178,7 +178,7 @@ extension Service {
             guard let path = v.source.hostPath else { continue }
             var isDir: ObjCBool = false
             guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else {
-                // secrets 的文件都得在：和普通挂载不一样，不存在时不建，报错（和 Docker 一样，DESIGN.md 第 8 节）
+                // secrets 的文件都得在：和普通挂载不一样，不存在时不建，报错（和 Docker 一样）
                 if case .secret = v.source { throw NapboxError(.composeInvalid, "\(name) 的 secrets 文件 \(path) 不存在") }
                 continue
             }

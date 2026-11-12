@@ -53,7 +53,7 @@ try {
     }
   }
 } catch (error) {
-  // 和命令行一样的错误格式（DESIGN.md 第 9 节）
+  // 和命令行一样的错误格式
   const { code, message } =
     error instanceof NapboxError ? error : { code: "internal_error", message: String(error) };
   process.stdout.write(`${JSON.stringify({ error: { code, message } })}\n`);

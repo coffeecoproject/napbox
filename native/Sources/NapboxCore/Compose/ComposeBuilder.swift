@@ -1,4 +1,4 @@
-// 把合并好的 compose 树校验并转成 ComposeProject。支持范围以 DESIGN.md 第 8 节为准，
+// 把合并好的 compose 树校验并转成 ComposeProject。只支持这里处理的写法，
 // 其余写法一律报错并说明原因，不静默忽略。
 import Foundation
 
@@ -50,7 +50,7 @@ struct ComposeBuilder {
                     networks.insert(name)
                     for (k, kv) in v.entries ?? [] {
                         if k == "name" || (k == "driver" && kv.string == "bridge") { continue }
-                        // internal 接受但不起作用：所有网络合成了一个，做不到只让其中几个服务断外网（DESIGN.md 第 8 节）。
+                        // internal 接受但不起作用：所有网络合成了一个，做不到只让其中几个服务断外网。
                         // 要断外网，整个环境用出网模式 none
                         if k == "internal" {
                             _ = bool(kv, "networks.\(name).internal")
@@ -139,7 +139,7 @@ struct ComposeBuilder {
         }
         checkCycles(active)
         checkPortVariables(active)
-        // 没启用的 profile 里的服务也留着端口：换 profile 再 up 时端口不变（DESIGN.md 第 5 节）。run 跑完就销毁，不用留
+        // 没启用的 profile 里的服务也留着端口：换 profile 再 up 时端口不变。run 跑完就销毁，不用留
         let reserved = run != nil ? [] : all.map(\.0).filter { !activeNames.contains($0.name) && !$0.ports.isEmpty }
         return ComposeProject(
             services: active.sorted { $0.name < $1.name }, volumes: volumes.sorted(), idleMinutes: idleMinutes, unsetVariables: [],
@@ -438,7 +438,7 @@ struct ComposeBuilder {
         for (i, item) in items.enumerated() {
             let ip = "\(p)[\(i)]"
             if let s = item.string {
-                // [宿主机 IP:][宿主机端口:]容器端口[/协议]，只取容器端口（DESIGN.md 第 5 节）
+                // [宿主机 IP:][宿主机端口:]容器端口[/协议]，只取容器端口
                 let containerPart = s.split(separator: ":", omittingEmptySubsequences: false).last.map(String.init) ?? ""
                 if let port = port(containerPart, ip) { result.append(port) }
             } else if let e = item.entries {
@@ -537,7 +537,7 @@ struct ComposeBuilder {
         return result
     }
 
-    /// 服务的 secrets：顶层声明的文件只读挂到 /run/secrets/<名字>，和 Docker 一样（DESIGN.md 第 8 节）
+    /// 服务的 secrets：顶层声明的文件只读挂到 /run/secrets/<名字>，和 Docker 一样
     private mutating func secretMounts(_ v: YAMLTree, _ p: String, declared: [String: String?]) -> [VolumeMount] {
         guard case .sequence(let items) = v else {
             if v != .null { issues.append(.invalid("\(p)：要是列表")) }

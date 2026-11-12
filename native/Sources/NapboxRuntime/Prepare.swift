@@ -1,4 +1,4 @@
-// napbox setup 的一步（DESIGN.md 第 4 节）：准备起环境要的东西，内核、runc、Rosetta 和 vminit 镜像。由 `napboxd prepare` 运行。
+// napbox setup 的一步：准备起环境要的东西，内核、runc、Rosetta 和 vminit 镜像。由 `napboxd prepare` 运行。
 // 放在 napboxd 里：系统的 tar 解不了 zstd，这里有 Containerization 带的解压；URLSession 也会走系统代理。
 import ContainerizationArchive
 import CryptoKit
@@ -7,7 +7,7 @@ import NapboxProtocol
 import Virtualization
 
 public enum Prepare {
-    /// apple/container 用的同一个内核包，里面取非 debug 版（DESIGN.md 第 2 节）
+    /// apple/container 用的同一个内核包，里面取非 debug 版
     static let kernelPackage = URL(string: "https://github.com/kata-containers/kata-containers/releases/download/3.32.0/kata-static-3.32.0-arm64.tar.zst")!
     static let kernelPackageSHA256 = "8736c054d9223974735394f822000823baef509e1c33405ec798240fa9b6e4b5"
     static let kernelMember = "opt/kata/share/kata-containers/vmlinux-6.18.35-197"

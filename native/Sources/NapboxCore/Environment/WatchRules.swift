@@ -1,4 +1,4 @@
-// develop.watch 的规则判断（DESIGN.md 第 8 节）：一个文件变了，按哪几条规则做什么。行为对着 docker compose 的 watch：
+// develop.watch 的规则判断：一个文件变了，按哪几条规则做什么。行为对着 docker compose 的 watch：
 // 每条匹配的规则都生效；排除规则是 rule.ignore、构建上下文的忽略文件，加上固定不看的 .git 和编辑器临时文件。
 import Foundation
 

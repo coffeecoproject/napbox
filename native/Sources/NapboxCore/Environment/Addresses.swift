@@ -1,4 +1,4 @@
-// 环境的固定 IP（DESIGN.md 第 6 节）：只用 192.168.64.128–246，前半段留给 container 命令行，247–254 留给构建虚拟机。
+// 环境的固定 IP：只用 192.168.64.128–246，前半段留给 container 命令行，247–254 留给构建虚拟机。
 // 检查地址有没有被占用，不能靠"连一下试试"（开着 Clash 时空闲地址也连得上），所以看两处：
 // napbox 自己的登记，和系统的 ARP 表（这个网段里最近有应答的地址）。
 import Foundation
@@ -11,13 +11,13 @@ public enum AddressAllocator {
     public static let gateway = "192.168.64.1"
 
     /// 虚拟机里 `napbox-guard gateway` 查到网关不在它的网络上时给的错误。系统把虚拟机放进了别的网段（这个网段被别的
-    /// 程序先占了），写死的地址和网关对不上，DNS 和出网都不通（DESIGN.md 第 2 节「和苹果 container 同时开着」）。
+    /// 程序先占了），写死的地址和网关对不上，DNS 和出网都不通。
     public static func gatewayUnreachable(_ detail: String) -> NapboxError {
         NapboxError(.addressUnavailable, "虚拟机连不上网关 \(gateway)（\(detail)）。\(prefix)0/24 这个网段可能被别的程序先占了，最常见的是苹果 container 的服务开着：先 container system stop，再重试。")
     }
 
     /// 构建虚拟机下一次用的地址：每次换一个。napboxd 崩溃时构建虚拟机来不及让引擎先退出，开着 Clash 的 TUN 时，
-    /// 这个地址之后可能很久连不上外网（DESIGN.md 第 2 节「镜像构建实测」）；下一次构建换地址就不受影响。
+    /// 这个地址之后可能很久连不上外网；下一次构建换地址就不受影响。
     /// - last：上一次用的地址，没有或看不懂时从头开始
     public static func builderAddress(after last: String) -> String {
         let host = Int(last.dropFirst(prefix.count)).flatMap { last.hasPrefix(prefix) && builderHosts.contains($0) ? $0 : nil }
@@ -47,7 +47,7 @@ public enum AddressAllocator {
     }
 }
 
-/// 环境里每个服务自己的地址（DESIGN.md 第 6 节）。每个环境一台虚拟机，这个网段只在虚拟机里面，所以所有环境用同一个，
+/// 环境里每个服务自己的地址。每个环境一台虚拟机，这个网段只在虚拟机里面，所以所有环境用同一个，
 /// 互相不影响，宿主机上也看不到它。
 public enum ServiceNetwork {
     static let prefix = "10.88.0."

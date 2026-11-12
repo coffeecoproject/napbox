@@ -11,7 +11,7 @@ set -uo pipefail
 source "$(dirname "$0")/lib.sh"
 cd "$root" || exit 1
 [ -x node_modules/.bin/tsc ] || { echo "先在仓库根目录运行 pnpm install"; exit 1; }
-# 调试版解镜像慢得不能用（DESIGN.md 第 2 节「镜像构建实测」），要解新镜像的这两组用正式版
+# 调试版解镜像慢得不能用，要解新镜像的这两组用正式版
 if [ "${1:-}" = build ] || [ "${1:-}" = watch ]; then build_native release; else build_native; fi
 export NAPBOX_BIN="$bin"
 

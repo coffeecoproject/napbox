@@ -169,7 +169,7 @@ export interface McpMessage {
 }
 
 /**
- * 构建虚拟机的地址记在隔离目录里轮换（DESIGN.md 第 2 节「开着 Clash TUN 时的断网」）。每次都是新目录，不写的话每轮都从同一个地址开始，
+ * 构建虚拟机的地址记在隔离目录里轮换。每次都是新目录，不写的话每轮都从同一个地址开始，
  * 碰到不通的就一直不通。真实使用时这个文件一直在，地址是接着轮的。
  */
 export function startBuilderAtRandomAddress(support: string): void {

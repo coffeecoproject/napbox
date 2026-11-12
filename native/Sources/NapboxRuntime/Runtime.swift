@@ -1,4 +1,4 @@
-// 用 Containerization 起环境：一个环境一个 LinuxPod，每个服务一个容器，外加一个网络小容器（DESIGN.md 第 3、7 节）。
+// 用 Containerization 起环境：一个环境一个 LinuxPod，每个服务一个容器，外加一个网络小容器。
 import Containerization
 import ContainerizationError
 import ContainerizationExtras
@@ -14,7 +14,7 @@ let linuxArm64 = Platform(arch: "arm64", os: "linux", variant: "v8")
 public actor Runtime {
     let supportDirectory: URL
     let storage: Storage
-    /// 网络小容器的程序（Linux 版 napbox-guard）。直接写进一个根文件系统，不用镜像（DESIGN.md 第 6 节）
+    /// 网络小容器的程序（Linux 版 napbox-guard）。直接写进一个根文件系统，不用镜像
     let guardBinary: URL
     let builder: ImageBuilder
     private var prepared: (store: ImageStore, vmm: VZVirtualMachineManager)?
@@ -151,7 +151,7 @@ public actor Runtime {
 
     /// 起一个环境：准备镜像、根文件系统、数据卷，创建 pod，按依赖顺序启动，等全部就绪。
     /// 失败时虚拟机已经停掉、日志文件已经关上，错误里说明是哪个服务、退出码和最后的日志。
-    /// 服务退出的通知由调用方登记好环境后用 deliverExits 接（restart，DESIGN.md 第 8 节）。
+    /// 服务退出的通知由调用方登记好环境后用 deliverExits 接（restart）。
     /// - skipping：唤醒时传已经成功跑完的一次性服务；显式 up 传空，和 Docker 一样一次性服务会再跑一次
     /// - trace：记下每个服务用的镜像、启动和就绪的时间，失败时也留着走到的部分（运行记录用）
     /// - foreground：napbox run 在前台跑的那个服务，接上它的标准输入和输出，不等它就绪
@@ -251,7 +251,7 @@ public actor Runtime {
         try EnvironmentLayout(directory: storage.environmentDirectory(record)).watchManifest(service)
     }
 
-    /// napbox down、worktree 删掉后回收：整个环境目录移到 recycled 下保留 7 天（DESIGN.md 第 12 节）。
+    /// napbox down、worktree 删掉后回收：整个环境目录移到 recycled 下保留 7 天。
     /// 环境没起过（没有目录）时返回 nil。
     public nonisolated func recycle(_ record: EnvironmentRecord, reason: String) throws(NapboxError) -> URL? {
         try storage.recycleEnvironment(record, reason: reason)
@@ -270,7 +270,7 @@ public actor Runtime {
     /// 删掉 recycled 下保留期满的数据，返回要记进日志的话
     public nonisolated func purgeRecycled(now: Date = Date()) -> [String] { storage.purgeRecycled(now: now) }
 
-    /// 记下一次起环境（运行记录，DESIGN.md 第 9 节）
+    /// 记下一次起环境（运行记录）
     public nonisolated func saveRun(_ record: EnvironmentRecord, _ run: RunRecord) throws(NapboxError) {
         try storage.appendRun(record, run)
     }

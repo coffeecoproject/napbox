@@ -1,4 +1,4 @@
-// MCP 工具，和命令行一一对应（DESIGN.md 第 4 节）。出错时的内容和命令行一样是 {"error": {"code", "message"}}。
+// MCP 工具，和命令行一一对应。出错时的内容和命令行一样是 {"error": {"code", "message"}}。
 import path from "node:path";
 import { z } from "zod";
 import type { NapboxClient, Output } from "../client.ts";

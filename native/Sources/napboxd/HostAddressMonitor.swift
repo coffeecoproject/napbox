@@ -1,5 +1,5 @@
 // 宿主机地址变化的通知：系统路由套接字（PF_ROUTE）上地址增删、网卡变化的消息。换 Wi-Fi、重启 Clash、
-// 连 VPN 时都会有。open 模式要挡住宿主机自己的地址，地址变了就要给在运行的环境重新加规则（DESIGN.md 第 6 节）。
+// 连 VPN 时都会有。open 模式要挡住宿主机自己的地址，地址变了就要给在运行的环境重新加规则。
 import Darwin
 import Dispatch
 

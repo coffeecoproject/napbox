@@ -1,4 +1,4 @@
-// 端口分配和锁定（DESIGN.md 第 5 节）：从 40000–49999 分配，同一个环境每次一样；
+// 端口分配和锁定：从 40000–49999 分配，同一个环境每次一样；
 // 分配后 napboxd 一直监听这些端口（休眠时也不放开），别的程序拿不到。
 import Darwin
 import Foundation
@@ -28,7 +28,7 @@ public struct PortRequest: Hashable, Sendable {
     }
 }
 
-/// 端口变量（DESIGN.md 第 5 节）：每个登记的端口给一个 `NAPBOX_<服务>_<容器端口>` 变量，值是宿主机上连它的地址。
+/// 端口变量：每个登记的端口给一个 `NAPBOX_<服务>_<容器端口>` 变量，值是宿主机上连它的地址。
 /// 名字不能撞（compose 检查时用 name 查），status、up 的结果和 ports.json 都按这里拼。
 public enum PortVariables {
     /// `NAPBOX_API_3100`：服务名转大写，字母数字以外的字符换成下划线。
@@ -51,7 +51,7 @@ public enum PortVariables {
 }
 
 /// napboxd 持有的监听 socket，一个宿主机端口一个，只监听 127.0.0.1。
-/// 判断端口有没有被别的程序占用（DESIGN.md 第 5 节）：
+/// 判断端口有没有被别的程序占用：
 /// 1. 不带 SO_REUSEADDR 绑定：绑上了就是完全空闲（别的程序监听在 127.0.0.1、0.0.0.0、[::] 上都会绑不上）。
 /// 2. 绑不上时，可能是有程序在监听，也可能只是刚断开的连接还在 TIME_WAIT（napboxd 重启后常见）。
 ///    这时才连一下 127.0.0.1 的这个端口：连得上就是有程序在监听，跳过。

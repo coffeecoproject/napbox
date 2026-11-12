@@ -14,5 +14,5 @@ export const packageVersion: string = JSON.parse(
 export const nativeDirectory = (): string =>
   process.env.NAPBOX_BIN || path.join(packageRoot, "native");
 
-/** 插件把固定版本的包装在这里。可以随时删，下次用到时重新安装；napboxd 不放这里（DESIGN.md 第 4 节） */
+/** 插件把固定版本的包装在这里。可以随时删，下次用到时重新安装；napboxd 不放这里 */
 export const cacheDirectory = (): string => path.join(homedir(), "Library/Caches/napbox");

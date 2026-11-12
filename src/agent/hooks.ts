@@ -1,4 +1,4 @@
-// Claude Code 插件的钩子（DESIGN.md 第 4 节、第 12 节第 3 条）：
+// Claude Code 插件的钩子：
 // - 会话开始和每次压缩上下文之后，当前 worktree 有环境就把端口告诉 agent；
 // - 已接入的项目里运行 docker compose up/start/run 时拦下；自己起数据库这类服务、或者 docker run 时提醒。
 import { execFile } from "node:child_process";
@@ -110,7 +110,7 @@ function resolveCds(cwd: string, cds: string[]): string {
   return cds.reduce((directory, target) => path.resolve(directory, target), cwd);
 }
 
-/** 已接入：worktree 根目录有 .napbox.yaml，或者这个仓库的某个 worktree 有环境记录（DESIGN.md 第 12 节第 3 条） */
+/** 已接入：worktree 根目录有 .napbox.yaml，或者这个仓库的某个 worktree 有环境记录 */
 async function isOnboarded(directory: string): Promise<boolean> {
   const root = await git(directory, ["rev-parse", "--show-toplevel"]);
   if (!root) return false;

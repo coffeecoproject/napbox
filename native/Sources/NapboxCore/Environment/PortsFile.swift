@@ -1,4 +1,4 @@
-// worktree 里的 .napbox/ports.json（DESIGN.md 第 5 节）：给不走 MCP 的工具读端口。
+// worktree 里的 .napbox/ports.json：给不走 MCP 的工具读端口。
 // 加进 .git/info/exclude，不改项目的 .gitignore。
 import Foundation
 import NapboxProtocol

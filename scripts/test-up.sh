@@ -55,7 +55,7 @@ stop_daemon() { kill -TERM "$daemon"; wait "$daemon"; code=$?; daemon=""; }
 port_of() { jq -r ".ports[] | select(.service == \"$1\") | .hostPort" <<<"$up"; }
 # 经端口代理连一个服务，输出它回的第一行。每次的结果（用时、超时还是被断开）记进 web_says.log，失败时查。
 # 最多等 30 秒：连接进来时环境可能还在停（status 已经是休眠），要先等它停完再唤醒；机器忙时唤醒本身也要
-# 3–4 秒（DESIGN.md 第 2 节）。2026-11-07 实测碰到过停 2 秒加唤醒 4.1 秒，超过了原来的 5 秒
+# 3–4 秒。2026-11-07 实测碰到过停 2 秒加唤醒 4.1 秒，超过了原来的 5 秒
 web_says() { python3 -I -c '
 import socket, sys, time
 port, log = int(sys.argv[1]), sys.argv[2]
@@ -170,7 +170,7 @@ check "端口不变" test "$(port_of web)" = "$web"
 check "显式 up 和 Docker 一样会再跑一次 seed" test "$(sql "$db" 'select count(*) from seeded')" = "2"
 
 echo "出网规则"
-# 宿主机上监听 0.0.0.0 的服务：没有规则时环境经网关或宿主机的局域网 IP 都能连到（DESIGN.md 第 2 节第 6 项）
+# 宿主机上监听 0.0.0.0 的服务：没有规则时环境经网关或宿主机的局域网 IP 都能连到
 hostport=$(python3 -I -c 'import socket; s=socket.socket(); s.bind(("", 0)); print(s.getsockname()[1])')
 python3 -I -c 'import socket,sys,time; s=socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("0.0.0.0", int(sys.argv[1]))); s.listen(8); time.sleep(600)' "$hostport" &
 hostsvc=$!
@@ -804,7 +804,7 @@ check "销毁" test "$(rpc down "$crash_target" | jq -r .result.name)" = race/cr
 
 echo "刚建好的数据库被强杀"
 # postgres 的入口脚本建好数据库后往 pg_hba.conf 追加放行外部连接的一行，不要求存盘。虚拟机里的内容最多 30 秒才写回，
-# 不在就绪时存一次盘的话，这时被强杀这一行就丢了，宿主机再也连不上，健康检查还是通过（DESIGN.md 第 2 节）
+# 不在就绪时存一次盘的话，这时被强杀这一行就丢了，宿主机再也连不上，健康检查还是通过
 mkdir -p "$work/race/freshdb/repo"
 cat >"$work/race/freshdb/repo/compose.yaml" <<'YAML'
 services:
@@ -881,7 +881,7 @@ check "已提交的数据都在" test "$(sql "$lost_port" 'select count(*) from 
 check "显式 up 和平时一样重跑一次性服务" test "$(sql "$lost_port" 'select count(*) from seeds')" = 2
 kill_own_vm
 check "再次被杀，又变成休眠" became_sleeping
-sleep 11 # 过了冷却期（第 7 节）
+sleep 11 # 过了冷却期
 check "没人用就一直休眠" test "$(lost_state)" = sleeping
 check "连接进来自动唤醒，数据都在" test "$(sql "$lost_port" 'select count(*) from kept')" = 1000
 check "自动唤醒不重跑跑完的一次性服务" test "$(sql "$lost_port" 'select count(*) from seeds')" = 2

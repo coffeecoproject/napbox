@@ -7,7 +7,7 @@ public enum NapboxVersion {
 }
 
 public enum Paths {
-    /// 所有状态都放在这里（DESIGN.md 第 4 节）。设了 NAPBOX_SUPPORT_DIR 时改用它，
+    /// 所有状态都放在这里。设了 NAPBOX_SUPPORT_DIR 时改用它，
     /// 测试用它起一份独立的 napboxd，不碰正在用的那份。
     public static var supportDirectory: URL {
         if let dir = ProcessInfo.processInfo.environment["NAPBOX_SUPPORT_DIR"], !dir.isEmpty {
@@ -119,16 +119,16 @@ public enum Method {
     public static let environment = "environment"
     public static let logs = "logs"
     public static let exec = "exec"
-    /// 订阅事件（DESIGN.md 第 9 节「给调用方的接口」）：之后一条一条推 event，直到断开
+    /// 订阅事件：之后一条一条推 event，直到断开
     public static let subscribe = "subscribe"
-    /// 起一个临时环境，在前台跑其中一个服务，跑完销毁（DESIGN.md 第 9 节「napbox run」）
+    /// 起一个临时环境，在前台跑其中一个服务，跑完销毁
     public static let run = "run"
     /// 这些方法一个连接只发一个请求：先回若干条 output（subscribe 是 event），最后一条是 result 或 error。
     /// exec、run 期间命令行还会在同一个连接上发 StdinMessage
     public static let streaming: Set<String> = [logs, exec, run, subscribe]
     public static let reset = "reset"
     public static let imageImport = "image.import"
-    /// 调用方创建环境（DESIGN.md 第 9 节）：同名、同持有方、同目录再调用就和 up 一样
+    /// 调用方创建环境：同名、同持有方、同目录再调用就和 up 一样
     public static let create = "create"
     /// 唤醒环境，服务都就绪后返回
     public static let wake = "wake"
@@ -158,7 +158,7 @@ public enum EnvironmentState: String, Codable, Sendable {
     case sleeping
 }
 
-/// 出网模式（DESIGN.md 第 6 节）。两种都访问不到宿主机和局域网，环境之间也互相访问不到。
+/// 出网模式。两种都访问不到宿主机和局域网，环境之间也互相访问不到。
 public enum EgressMode: String, Codable, Sendable, CaseIterable {
     /// 默认：能上外网
     case open
@@ -228,7 +228,7 @@ public struct UpParams: Codable, Sendable {
     /// -f 指定的 compose 文件（相对 cwd），空表示自动查找
     public var files: [String]
     public var profiles: [String]
-    /// 调用方的环境变量，compose 的变量替换用（DESIGN.md 第 8 节）
+    /// 调用方的环境变量，compose 的变量替换用
     public var environment: [String: String]
     /// 写了 build 的服务都重新构建，不管镜像有没有（--build）
     public var build: Bool
@@ -276,7 +276,7 @@ public struct RunParams: Codable, Sendable {
 }
 
 /// 操作哪个环境：命令行按所在目录找 worktree 持有的环境（`{"cwd"}`，临时环境再带上它的名字 `{"cwd", "temp"}`）；
-/// 调用方按环境名，持有方要对上（`{"name", "owner"}`，DESIGN.md 第 9 节）
+/// 调用方按环境名，持有方要对上（`{"name", "owner"}`）
 public enum EnvironmentTarget: Codable, Sendable, Equatable {
     case directory(String, temporary: String? = nil)
     case named(String, owner: String)
@@ -319,7 +319,7 @@ public struct EnvironmentParams: Codable, Sendable {
     }
 }
 
-/// 调用方创建环境（DESIGN.md 第 9 节）。环境由调用方持有：napbox 不按 worktree 回收它，只有调用方能操作它。
+/// 调用方创建环境。环境由调用方持有：napbox 不按 worktree 回收它，只有调用方能操作它。
 public struct CreateParams: Codable, Sendable {
     /// 调用方给的完整环境名，`前缀/名字`，比如 codeos/goal-12-work
     public var name: String
@@ -330,7 +330,7 @@ public struct CreateParams: Codable, Sendable {
     /// compose 文件（相对 directory 或绝对路径），按顺序合并；空表示和 up 一样从 directory 查找
     public var files: [String]
     public var profiles: [String]
-    /// compose 变量替换用的变量（DESIGN.md 第 8 节），调用方显式给出
+    /// compose 变量替换用的变量，调用方显式给出
     public var environment: [String: String]
     /// 出网模式；nil 时新环境是 open，已有的环境保持原样
     public var egress: EgressMode?
@@ -347,7 +347,7 @@ public struct CreateParams: Codable, Sendable {
     }
 }
 
-/// 环境运行中有服务退出了（DESIGN.md 第 8 节 restart）
+/// 环境运行中有服务退出了（restart）
 public struct ServiceExit: Codable, Sendable {
     public enum Restart: String, Codable, Sendable {
         /// restart 没写或是 no，或者 on-failure 时正常退出
@@ -394,7 +394,7 @@ public struct EgressParams: Codable, Sendable {
 public struct DownResult: Codable, Sendable {
     public var name: String
     public var releasedPorts: [Int]
-    /// 数据卷移到这里保留 7 天（DESIGN.md 第 12 节）。临时环境的数据直接删，是 nil
+    /// 数据卷移到这里保留 7 天。临时环境的数据直接删，是 nil
     public var keptDataAt: String?
 
     public init(name: String, releasedPorts: [Int], keptDataAt: String?) {
@@ -526,7 +526,7 @@ public struct ExecResult: Codable, Sendable {
     }
 }
 
-// MARK: - 运行记录（DESIGN.md 第 9 节「给调用方的接口」）
+// MARK: - 运行记录
 
 /// 一次起环境（up、create、唤醒、reset、按 restart 重启）的记录，成功失败都记。放在环境目录里，
 /// 每个环境最多留最近 200 条，回收时随数据移到 recycled/ 保留 7 天。
@@ -570,7 +570,7 @@ public struct RunRecord: Codable, Sendable {
 }
 
 public struct ServiceRun: Codable, Sendable {
-    /// 怎么判断就绪的（DESIGN.md 第 7 节）
+    /// 怎么判断就绪的
     public enum Readiness: String, Codable, Sendable {
         /// healthcheck 通过
         case healthcheck
@@ -616,7 +616,7 @@ public struct RunsResult: Codable, Sendable {
     }
 }
 
-// MARK: - 事件（DESIGN.md 第 9 节「给调用方的接口」）
+// MARK: - 事件
 
 /// 订阅哪些环境的事件；都不写是全部
 public struct SubscribeParams: Codable, Sendable {

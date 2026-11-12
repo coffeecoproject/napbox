@@ -1,4 +1,4 @@
-// 服务退出后按 restart 整个环境重启（DESIGN.md 第 8 节），要不要重启由 RestartTracker 决定。
+// 服务退出后按 restart 整个环境重启，要不要重启由 RestartTracker 决定。
 import Foundation
 import NIOCore
 import NapboxCore
@@ -6,7 +6,7 @@ import NapboxProtocol
 import NapboxRuntime
 
 extension Daemon {
-    // MARK: - restart（DESIGN.md 第 8 节）
+    // MARK: - restart
 
     /// 就绪以后有服务退出：按它的 restart 决定（RestartTracker）。要重启时整个环境一起重启（单个服务不能单独重启），
     /// 跳过已经跑完的一次性服务。

@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// 新的命名卷带上镜像里那个目录的内容（DESIGN.md 第 8 节），规则照 Docker 建容器时的做法（moby 的
+// 新的命名卷带上镜像里那个目录的内容，规则照 Docker 建容器时的做法（moby 的
 // populateVolume 和 containerd 的 fs.CopyDir）：镜像里有这个目录、卷是空的，就把目录里的东西连同属主、权限、
 // 扩展属性、时间复制进卷，卷的根目录也改成镜像里那个目录的属主和权限。镜像里没有这个目录，或者卷里已经有东西，就不动。
 //

@@ -1,4 +1,4 @@
-// 虚拟机开机后马上把它的时钟对到宿主机（DESIGN.md 第 2 节「虚拟机时钟」）。
+// 虚拟机开机后马上把它的时钟对到宿主机。
 import Containerization
 import Foundation
 import NapboxProtocol

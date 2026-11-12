@@ -1,4 +1,4 @@
-// 一个正在运行的环境：按依赖顺序启动服务、判断就绪、记录每个服务的退出（DESIGN.md 第 7 节）。
+// 一个正在运行的环境：按依赖顺序启动服务、判断就绪、记录每个服务的退出。
 import Containerization
 import ContainerizationArchive
 import ContainerizationError
@@ -51,7 +51,7 @@ public actor RunningEnvironment {
     private var project: ComposeProject?
     /// 停的顺序：按依赖分层倒过来，先停依赖别人的，被依赖的（比如数据库）最后停
     private var stopLayers: [[String]] = []
-    /// 服务退出的通知：交给 napboxd 按 restart 决定要不要整个环境重启（DESIGN.md 第 8 节）
+    /// 服务退出的通知：交给 napboxd 按 restart 决定要不要整个环境重启
     public typealias ExitHandler = @Sendable (RunningEnvironment, String, Int32) -> Void
     /// napboxd 把环境登记成运行中以后才给（deliverExits）；在那之前的退出先存在 undelivered 里
     private var exitHandler: ExitHandler?
@@ -66,7 +66,7 @@ public actor RunningEnvironment {
     /// 当前的出网模式，和 open 模式下挡住的宿主机地址
     private var egress: EgressMode = .open
     private var blockedHostAddresses: [String] = []
-    /// 把宿主机挂载目录的变化转给虚拟机（DESIGN.md 第 8 节）
+    /// 把宿主机挂载目录的变化转给虚拟机
     private var sourceStream: SourceEventStream?
     private var sourceForwarder: SourceEventForwarder?
     /// 挂进服务的单个文件，和每一处上次对过时宿主机上那个文件的样子（哪个文件、多大、什么时候改的、权限）。
@@ -169,7 +169,7 @@ public actor RunningEnvironment {
     // MARK: - 启动
 
     /// - skipping：已经成功跑完的一次性服务。唤醒时它们照样加进 pod，但不启动、也不重新执行，
-    ///   依赖它们 service_completed_successfully 的服务直接算满足（DESIGN.md 第 7 节）
+    ///   依赖它们 service_completed_successfully 的服务直接算满足
     /// - foreground：napbox run 在前台跑的那个服务。照依赖顺序启动，但不等它就绪：它跑完就退出，退出码由
     ///   foregroundExit 交给调用方，不为 0 也不算起环境失败
     /// - egress：先加好出网规则再启动服务，服务起来的那一刻规则就在
@@ -215,7 +215,7 @@ public actor RunningEnvironment {
         // 服务启动的那一刻宿主机正好在换文件的话，服务挂上的可能是被换掉的那个：报就绪之前确认一遍
         try await catchUpBoundFiles()
         // 报就绪之前存一次盘：启动期间写的内容（比如 postgres 入口脚本追加的 pg_hba.conf）最多 30 秒才写回，
-        // 这时虚拟机随 napboxd 崩溃一起没了就丢了（DESIGN.md 第 2 节）
+        // 这时虚拟机随 napboxd 崩溃一起没了就丢了
         let (code, output) = await exec(GuardContainer.name, [GuardContainer.program, "sync"], timeout: 30)
         if code != 0 {
             throw NapboxError(.runtimeUnavailable, "就绪时存盘失败：\(output.isEmpty ? "退出码 \(code)" : output)")
@@ -228,8 +228,8 @@ public actor RunningEnvironment {
         }
     }
 
-    /// 和 Docker 建容器时一样：服务挂的命名卷是空的、镜像里有这个目录，就先把目录里的东西连同属主、权限复制进卷
-    /// （DESIGN.md 第 8 节）。在网络小容器里做（guard/populate.go），这时服务还没启动。每个卷对服务现在的根文件系统只看一次。
+    /// 和 Docker 建容器时一样：服务挂的命名卷是空的、镜像里有这个目录，就先把目录里的东西连同属主、权限复制进卷。
+    /// 在网络小容器里做（guard/populate.go），这时服务还没启动。每个卷对服务现在的根文件系统只看一次。
     /// 不设时限：镜像里的目录可能很大（比如 node_modules），Docker 也是等它复制完。
     private func populateVolumes(_ s: Service) async throws(NapboxError) {
         for (volume, target) in s.namedVolumes where !layout.volumePopulated(volume, service: s.name) {
@@ -571,7 +571,7 @@ public actor RunningEnvironment {
         )
     }
 
-    /// 让命令看到宿主机在它开始之前写完的内容（DESIGN.md 第 2 节）：虚拟机里记着源码挂载的文件信息，从上次碰这个文件起
+    /// 让命令看到宿主机在它开始之前写完的内容：虚拟机里记着源码挂载的文件信息，从上次碰这个文件起
     /// 约 1 秒内不回宿主机问，这期间宿主机改了就会读到旧大小、旧内容，改名覆盖的还会报没有这个文件。框架没有调这个时间的
     /// 设置，所以执行命令前让 vminitd 清一次虚拟机的目录项缓存（只清目录项，不清文件内容；实测约 6 毫秒）。
     /// 清不掉还被进程打开着的文件：那种情况仍要等这 1 秒。清不了时报错，不让命令在可能读到旧内容的情况下跑。
@@ -585,7 +585,7 @@ public actor RunningEnvironment {
     /// 重新挂文件的那条命令要的权限（guard/rebind.go），网络小容器的 1 号进程和项目的服务都没有
     private static let rebindCapabilities = LinuxCapabilities(capabilities: [.sysAdmin, .sysChroot, .sysPtrace, .dacReadSearch])
 
-    /// 挂进服务的单个文件在宿主机上变了，让在跑的服务跟上（DESIGN.md 第 8 节）。容器里绑定的是文件本身，清目录项缓存
+    /// 挂进服务的单个文件在宿主机上变了，让在跑的服务跟上。容器里绑定的是文件本身，清目录项缓存
     /// 对它不起作用，所以每个文件记着上次对过时的样子，不一样了就让网络小容器回宿主机重新查一遍（guard/rebind.go）：
     /// - 换成了另一个文件（先写临时文件再改名：编辑器、git、agent 的写文件工具都这么保存）：挂上现在这个，不然读它会报错；
     /// - 还是这个文件、内容被原地改写了：虚拟机拿到新的大小，不然按旧的大小读，读到的是截短的内容。
@@ -643,7 +643,7 @@ public actor RunningEnvironment {
         case failed(NapboxError)
     }
 
-    /// 虚拟机里文件监听（inotify）的上限，照 Docker Desktop 的值设（DESIGN.md 第 2 节「文件监听的上限」）：
+    /// 虚拟机里文件监听（inotify）的上限，照 Docker Desktop 的值设：
     /// 内核自己按虚拟机内存算的默认值小得多，chokidar 这类每个文件占一个监听的工具在前端项目里会不够。
     /// 一台虚拟机里的容器共用这一份，所以每次起虚拟机设一次。
     private static let inotifyLimits = [
@@ -674,7 +674,7 @@ public actor RunningEnvironment {
 
     // MARK: - 出网规则
 
-    /// 在网络小容器里换掉整个环境的出网规则（DESIGN.md 第 6 节）。open 模式带上宿主机当前的地址一起挡。
+    /// 在网络小容器里换掉整个环境的出网规则。open 模式带上宿主机当前的地址一起挡。
     /// 只有这条命令带网络管理权限 NET_ADMIN，网络小容器的 1 号进程和项目的服务都没有（Containerization 默认的权限里没有它）。
     /// 失败时规则保持原样（napbox-guard 一次事务换完）。
     public func applyEgress(_ mode: EgressMode) async throws(NapboxError) {

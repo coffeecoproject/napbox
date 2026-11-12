@@ -1,4 +1,4 @@
-// 宿主机文件变化 → 要在虚拟机里发的通知（DESIGN.md 第 8 节）。这里只决定发什么，真正去发的是 NapboxRuntime/SourceEvents。
+// 宿主机文件变化 → 要在虚拟机里发的通知。这里只决定发什么，真正去发的是 NapboxRuntime/SourceEvents。
 import Foundation
 
 /// 一条源码挂载：宿主机上的路径，和它在网络小容器里的路径。挂的可以是目录，也可以是单个文件

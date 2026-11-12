@@ -1,5 +1,5 @@
 // 解析、合并、校验之后的 compose：只含第一版支持的内容，路径都已换成绝对路径，变量都已替换。
-// up 时生成一份并保存下来，之后唤醒都用这一份，直到下次 up（DESIGN.md 第 8 节）。
+// up 时生成一份并保存下来，之后唤醒都用这一份，直到下次 up。
 import CryptoKit
 import Foundation
 
@@ -13,7 +13,7 @@ public struct ComposeProject: Codable, Equatable, Sendable {
     /// 用到了但没设置、也没有默认值的变量（按空字符串处理，和 compose 一样）
     public var unsetVariables: [String]
     /// 没启用的 profile 里的服务写的 ports：服务名 → 容器端口，没有这样的服务是 nil。它们也分配宿主机端口、锁着，
-    /// 只是不转发、不列出，换 profile 再 up 时还是同一个端口；服务从 compose 里删掉才释放（DESIGN.md 第 5 节）。
+    /// 只是不转发、不列出，换 profile 再 up 时还是同一个端口；服务从 compose 里删掉才释放。
     /// napbox run 不留
     public var reservedPorts: [String: [Int]]? = nil
 
@@ -53,10 +53,10 @@ public struct Service: Codable, Equatable, Sendable {
     public var restart: RestartPolicy
     public var memoryBytes: UInt64
     public var keepAwake: Bool
-    /// develop.watch（DESIGN.md 第 8 节）
+    /// develop.watch
     public var watch: [WatchRule] = []
 
-    /// 判断就绪用：写了 ports 或 expose 的算有端口（DESIGN.md 第 7 节）
+    /// 判断就绪用：写了 ports 或 expose 的算有端口
     public var listeningPorts: [Int] { Array(Set(ports + expose)).sorted() }
 }
 
@@ -154,7 +154,7 @@ public enum RestartPolicy: Codable, Equatable, Sendable {
     case unlessStopped
     case onFailure(maxRetries: Int?)
 
-    /// 这个退出码要不要重启（不看 on-failure 的次数上限）。规则和 Docker 一致（DESIGN.md 第 8 节）
+    /// 这个退出码要不要重启（不看 on-failure 的次数上限）。规则和 Docker 一致
     public func restarts(afterExit code: Int32) -> Bool {
         switch self {
         case .no: false
@@ -165,7 +165,7 @@ public enum RestartPolicy: Codable, Equatable, Sendable {
 }
 
 extension ComposeProject {
-    /// 这样退出算不算跑完（唤醒、重启时不再启动，DESIGN.md 第 8 节）：退出码 0、不用再起，而且是一次性服务。
+    /// 这样退出算不算跑完（唤醒、重启时不再启动）：退出码 0、不用再起，而且是一次性服务。
     /// compose 没有写明谁是一次性服务：别的服务要等它 service_completed_successfully 的算；
     /// 剩下的看它有没有端口和 healthcheck，有的是要一直提供服务的，退出码 0 也不算跑完。
     public func completes(_ service: Service, exitCode code: Int32) -> Bool {
@@ -184,7 +184,7 @@ extension ComposeProject {
         Set(services.flatMap { $0.volumes.compactMap(\.source.hostPath) }).sorted()
     }
 
-    /// 运行记录里的定义摘要：键排好序的 JSON 的 sha256（DESIGN.md 第 9 节）
+    /// 运行记录里的定义摘要：键排好序的 JSON 的 sha256
     public var digest: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]

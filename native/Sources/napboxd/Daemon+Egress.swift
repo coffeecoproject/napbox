@@ -1,4 +1,4 @@
-// 出网模式切换、宿主机地址变了以后重新加规则（DESIGN.md 第 6 节）。
+// 出网模式切换、宿主机地址变了以后重新加规则。
 import Foundation
 import NIOCore
 import NapboxCore

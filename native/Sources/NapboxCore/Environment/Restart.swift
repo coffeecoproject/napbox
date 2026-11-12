@@ -1,4 +1,4 @@
-// 服务退出后要不要重启、等多久（DESIGN.md 第 8 节）：规则和 Docker 一致。always、unless-stopped 退出就重启，
+// 服务退出后要不要重启、等多久：规则和 Docker 一致。always、unless-stopped 退出就重启，
 // on-failure 退出码非 0 才重启、:N 限制次数；要重启时整个环境一起重启。退避：等待从 0.1 秒开始每次翻倍，
 // 最多 1 分钟；上次起来后稳定跑了 10 秒以上就从 0.1 秒重新算。
 import Foundation

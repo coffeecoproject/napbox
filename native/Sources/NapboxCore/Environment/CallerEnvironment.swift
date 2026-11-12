@@ -1,4 +1,4 @@
-// 调用方持有的环境（DESIGN.md 第 3、9 节）：名字和持有方标识的格式、代码副本目录。
+// 调用方持有的环境：名字和持有方标识的格式、代码副本目录。
 import Foundation
 import NapboxProtocol
 

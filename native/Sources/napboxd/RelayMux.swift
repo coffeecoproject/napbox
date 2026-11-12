@@ -1,4 +1,4 @@
-// 端口转发的 napboxd 这一头（DESIGN.md 第 5 节）：每个环境一条 vsock，所有转发的连接复用它。
+// 端口转发的 napboxd 这一头：每个环境一条 vsock，所有转发的连接复用它。
 // 协议和原因见 guard/mux.go。一个连接一条 vsock 不行：同时一两百条时虚拟化进程会崩溃。
 //
 // 线程：RelayMux 的状态只在 vsock 这条 channel 的 event loop 上碰；RelayStreamHandler 的状态只在客户端连接的 event loop 上碰。

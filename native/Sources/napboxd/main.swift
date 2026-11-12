@@ -16,7 +16,7 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
-// napboxd prepare：准备内核、runc、Rosetta 和 vminit 后退出，不监听（napbox setup 调用，DESIGN.md 第 4 节）
+// napboxd prepare：准备内核、runc、Rosetta 和 vminit 后退出，不监听（napbox setup 调用）
 if CommandLine.arguments.dropFirst().first == "prepare" {
     do {
         try await Prepare.run(supportDirectory: Paths.supportDirectory) { print($0) }

@@ -9,7 +9,7 @@ import NapboxRuntime
 actor Daemon {
     let startedAt = Date()
     let store: StateStore
-    /// 登记过的端口一直锁着，环境休眠时也不放开（DESIGN.md 第 5 节）
+    /// 登记过的端口一直锁着，环境休眠时也不放开
     let locks = PortLocks()
     let runtime: Runtime
     /// 正在运行的环境
@@ -28,7 +28,7 @@ actor Daemon {
     var sessions: [String: EnvSession] = [:]
     /// 在跑的环境的 develop.watch 监听
     var watchSessions: [String: WatchSession] = [:]
-    /// 同时唤醒的环境数（DESIGN.md 第 7 节「唤醒排队」：meetingSum 实测 6 个同时唤醒基本不变慢）
+    /// 同时唤醒的环境数（meetingSum 实测 6 个同时唤醒基本不变慢）
     let wakeSlots = Slots(limit: 6)
     /// 同一个环境的操作排队执行（up 要等很久，期间别的请求照常处理）
     var queues: [String: Task<Void, Never>] = [:]
@@ -40,11 +40,11 @@ actor Daemon {
     /// 定时检查（闲置、worktree 删除、保留期），退出时取消
     var periodic: [Task<Void, Never>] = []
 
-    /// 闲置多久休眠的默认值（DESIGN.md 第 12 节），项目用 x-napbox.idle_minutes 覆盖
+    /// 闲置多久休眠的默认值，项目用 x-napbox.idle_minutes 覆盖
     static let defaultIdleMinutes = 30
     /// 多久检查一次闲置
     static let idleCheckSeconds: UInt64 = 10
-    /// 多久检查一次 worktree 是不是删掉了（DESIGN.md 第 9 节）
+    /// 多久检查一次 worktree 是不是删掉了
     static let worktreeCheckSeconds: UInt64 = 60
     /// 多久清理一次 recycled 下保留期满的数据
     static let purgeCheckSeconds: UInt64 = 3600
@@ -160,7 +160,7 @@ actor Daemon {
         )
     }
 
-    /// 按 target 找登记的环境（DESIGN.md 第 9 节）：
+    /// 按 target 找登记的环境：
     /// - 目录：这个 worktree 的开发环境，带了临时环境的名字就是那个临时环境（都是 worktree 持有的）。
     ///   目录是调用方持有的环境的代码副本时拒绝，那个环境只能由调用方操作
     /// - 名字：这个名字的环境，持有方要对上
@@ -192,7 +192,7 @@ actor Daemon {
         throw NapboxError(.ownerMismatch, "\(path) 是 \(owner) 持有的环境 \(record.name) 的代码副本，这个环境只能由 \(owner) 通过接口操作")
     }
 
-    /// 环境的运行记录（DESIGN.md 第 9 节）
+    /// 环境的运行记录
     func runs(_ params: EnvironmentParams) async throws(NapboxError) -> RunsResult {
         let record = try await record(for: params.target)
         let runtime = runtime

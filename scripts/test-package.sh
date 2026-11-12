@@ -1,5 +1,5 @@
 #!/bin/bash
-# 打包和安装的全流程，照用户装插件时的路径走一遍（DESIGN.md 第 4 节）。真的注册 launchd 服务、起虚拟机。
+# 打包和安装的全流程，照用户装插件时的路径走一遍。真的注册 launchd 服务、起虚拟机。
 # 用隔离的 HOME 和 NAPBOX_SUPPORT_DIR；launchd 服务用另一个名字，测完注销，不碰正式的登录项。
 #
 #   scripts/test-package.sh

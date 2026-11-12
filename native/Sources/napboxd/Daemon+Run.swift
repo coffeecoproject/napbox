@@ -1,4 +1,4 @@
-// napbox run：起一个临时环境，在前台跑其中一个服务，跑完销毁（DESIGN.md 第 9 节「napbox run」）。流式收发在 Streams.swift。
+// napbox run：起一个临时环境，在前台跑其中一个服务，跑完销毁。流式收发在 Streams.swift。
 import Foundation
 import NIOCore
 import NapboxCore

@@ -8,8 +8,8 @@ import NapboxRuntime
 extension Daemon {
     // MARK: - up
 
-    /// 创建或重新启动当前 worktree 的环境，服务都就绪后返回端口和环境变量（DESIGN.md 第 9 节）。
-    /// 给了 temp 时是这个 worktree 的临时环境（DESIGN.md 第 9 节「临时环境」）。
+    /// 创建或重新启动当前 worktree 的环境，服务都就绪后返回端口和环境变量。
+    /// 给了 temp 时是这个 worktree 的临时环境。
     func up(_ params: UpParams) async throws(NapboxError) -> EnvironmentInfo {
         if let temp = params.temp { try TemporaryEnvironment.validate(name: temp) }
         let cwd = URL(fileURLWithPath: params.cwd)
@@ -75,7 +75,7 @@ extension Daemon {
         return info(registered)
     }
 
-    // MARK: - create（调用方持有的环境，DESIGN.md 第 9 节）
+    // MARK: - create（调用方持有的环境）
 
     /// 调用方创建环境。名字由调用方给；同名、同持有方、同目录再调用时定义没变就保证它在运行（在运行的直接返回，
     /// 休眠的唤醒），定义变了整个环境重启；持有方或目录不同时报 name_taken。
@@ -115,7 +115,7 @@ extension Daemon {
     // MARK: - 起环境
 
     /// up 和 create 共用：已经在运行、定义和镜像都没变、服务都在就不重启（只按要求换出网模式）；否则整个环境重新起
-    /// （单个服务不能单独重启，DESIGN.md 第 7 节），一次性服务重跑。准备好了才停旧环境：
+    /// （单个服务不能单独重启），一次性服务重跑。准备好了才停旧环境：
     /// secrets 的文件不在、构建失败、镜像名写错、端口被占这类失败不影响在跑的环境，登记和定义也不变。
     /// - egress：要切到的出网模式，nil 是不变（新环境 open）
     /// - rebuild：up --build，写了 build 的服务都重新构建
@@ -212,7 +212,7 @@ extension Daemon {
     /// 起环境（up、create、唤醒、reset、按 restart 重启都走这里），起来后登记成运行中，再开始接它的服务退出通知
     /// （先登记再接：每条通知都能对上 running 里的环境）。成功失败都留一条运行记录、发一条事件；失败时记下原因，
     /// 冷却期内自动唤醒不再试。各入口共同的前提都在这里查：napboxd 不在退出、登记的端口都锁得上。
-    /// 临时环境起不来就整个销毁：它没有休眠，不留一个停着的（DESIGN.md 第 9 节「临时环境」）。
+    /// 临时环境起不来就整个销毁：它没有休眠，不留一个停着的。
     /// - purpose：这次是为什么起。按 restart 重启时保留退避和重启次数，别的情况重新算
     /// - foreground：napbox run 在前台跑的那个服务
     func launch(_ record: EnvironmentRecord, project: ComposeProject, skipping: Set<String>,
@@ -225,7 +225,7 @@ extension Daemon {
         let env: RunningEnvironment
         do {
             try lockPorts(record)
-            // 先开始监听：起环境期间进来的连接排队等着，环境就绪后再转发（DESIGN.md 第 6 节「转发时机」）
+            // 先开始监听：起环境期间进来的连接排队等着，环境就绪后再转发
             await syncListeners(name)
             env = try await runtime.start(record, project: project, skipping: skipping, foreground: foreground, trace: trace)
         } catch {

@@ -1,4 +1,4 @@
-// 当前目录属于哪个项目、哪个 worktree（DESIGN.md 第 3 节）。项目以主仓库路径为标识。
+// 当前目录属于哪个项目、哪个 worktree。项目以主仓库路径为标识。
 import Foundation
 import NapboxProtocol
 
@@ -34,7 +34,7 @@ public struct WorktreeLocation: Equatable, Sendable {
     }
 }
 
-/// worktree 持有的环境，它的 worktree 还在不在（DESIGN.md 第 9 节「worktree 删除检测」）。
+/// worktree 持有的环境，它的 worktree 还在不在。
 /// 只有确定不在了才算 gone；git 查不了时是 unknown，这次不回收，免得误删还在用的环境。
 public enum WorktreePresence: Equatable, Sendable {
     case present

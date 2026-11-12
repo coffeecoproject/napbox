@@ -1,4 +1,4 @@
-// 构建镜像（compose 的 build，DESIGN.md 第 8 节）：在一个专用虚拟机里跑 Docker 用的构建引擎 BuildKit，
+// 构建镜像（compose 的 build）：在一个专用虚拟机里跑 Docker 用的构建引擎 BuildKit，
 // 结果导回 napbox 的镜像库。虚拟机按需开、构建完就关，所有环境共用一份构建缓存。
 // 缓存卷同一时间只能挂在一个虚拟机上，要构建的目录也只能在开机时共享进去，所以一次只跑一个构建，其余排队。
 import Containerization
@@ -350,7 +350,7 @@ actor ImageBuilder {
     }
 
     /// 让引擎自己退出再关虚拟机。开着 Clash 的 TUN 时，虚拟机带着外网连接被直接关掉后，同一地址再开机可能很久
-    /// 连不上走 Clash 的外网，引擎先退出就没有这个问题（DESIGN.md 第 2 节「镜像构建实测」）。
+    /// 连不上走 Clash 的外网，引擎先退出就没有这个问题。
     /// 引擎收到 SIGTERM 后会等还在跑的构建结束（RUN 可能要很久），所以先结束 buildctl：连接断了，引擎就取消构建。
     private func stopEngine() async {
         guard let pod = active else { return }

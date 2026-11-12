@@ -11,6 +11,6 @@ bin="$(swift build --package-path "$root/native" -c "$config" --show-bin-path)"
 # 正式版去掉调试符号：符号表里记着每个中间文件的本机路径。要在签名前做
 [ "$config" = release ] && strip -S "$bin/napbox" "$bin/napboxd"
 codesign -f -s - --entitlements "$root/native/napboxd.entitlements" "$bin/napboxd"
-# 网络小容器的程序：Linux arm64 静态程序，放在 napboxd 旁边（DESIGN.md 第 6 节）。用本机的 Go，不自动下载别的版本
+# 网络小容器的程序：Linux arm64 静态程序，放在 napboxd 旁边。用本机的 Go，不自动下载别的版本
 (cd "$root/guard" && GOTOOLCHAIN=local GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags=-s -o "$bin/napbox-guard" .)
 echo "$bin"

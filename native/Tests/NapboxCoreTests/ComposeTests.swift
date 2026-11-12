@@ -341,7 +341,7 @@ extension [ComposeIssue] {
         #expect(try issues(["compose.yaml": "services:\n  a: {build: ., pull_policy: build}\n  b: {build: ., pull_policy: never}\n"]).isEmpty)
     }
 
-    /// 每个服务有自己的网络（DESIGN.md 第 6 节），两个服务监听同一个端口没问题
+    /// 每个服务有自己的网络，两个服务监听同一个端口没问题
     @Test func servicesMayListenOnTheSamePort() throws {
         let found = try issues(["compose.yaml": """
         services:
@@ -409,7 +409,7 @@ extension [ComposeIssue] {
         #expect(dependsOnInactive.mentions("tools 属于没启用的 profile"))
     }
 
-    /// 没启用的 profile 里的服务写的 ports 也要分配，换 profile 再 up 时端口不变（DESIGN.md 第 5 节）
+    /// 没启用的 profile 里的服务写的 ports 也要分配，换 profile 再 up 时端口不变
     @Test func inactiveProfilesReservePorts() throws {
         let files = ["compose.yaml": """
         services:

@@ -1,4 +1,4 @@
-// 宿主机自己的地址：open 模式下环境要连不到它们（DESIGN.md 第 6 节）。私有网段之外的也算，
+// 宿主机自己的地址：open 模式下环境要连不到它们。私有网段之外的也算，
 // 比如 Clash TUN 网卡的 198.18.0.1、直接分到的公网 IP。
 import Darwin
 import NapboxProtocol

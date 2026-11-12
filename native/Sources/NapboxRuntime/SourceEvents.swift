@@ -1,4 +1,4 @@
-// 把宿主机挂载目录的变化转给虚拟机（DESIGN.md 第 8 节）：FSEvents 报变化 → SourceChangePlanner 决定发什么 →
+// 把宿主机挂载目录的变化转给虚拟机：FSEvents 报变化 → SourceChangePlanner 决定发什么 →
 // 清虚拟机的目录项缓存（让通知发出后读到的是新内容）→ 发给网络小容器（guard/notify.go）。
 import CoreServices
 import Foundation
@@ -116,7 +116,7 @@ actor SourceEventForwarder {
 
 /// FSEvents：宿主机上这些目录里有东西变了就报，一次一批。不用轮询，目录多大都不费事。
 /// 这边接得慢时系统会丢掉后面的事件，并在监听的目录上报一条带“丢了事件、自己重扫”标志的事件：这些交给 onDropped。
-/// 现在只用来记日志，没有重扫（DESIGN.md 第 2 节「只记日志、没补发的一种情况」）。
+/// 现在只用来记日志，没有重扫。
 public final class SourceEventStream: @unchecked Sendable {
     /// 攒多久报一次。短一点热更新才快；保存一次通常只有一两个事件
     private static let latencySeconds: CFTimeInterval = 0.05

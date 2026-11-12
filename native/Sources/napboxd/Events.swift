@@ -1,4 +1,4 @@
-// 事件分发（DESIGN.md 第 9 节「给调用方的接口」）：Daemon 发出事件，每个 subscribe 连接按自己的条件收。
+// 事件分发：Daemon 发出事件，每个 subscribe 连接按自己的条件收。
 // 不存盘、不补发：断开期间的事件调用方用 status 和 runs 补齐。
 import Foundation
 import NIOConcurrencyHelpers

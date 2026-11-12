@@ -1,4 +1,4 @@
-// 启动容器用的东西（DESIGN.md 第 6 节「每个服务自己的网络」）。虚拟机里的 vminitd 自己启动的容器都在虚拟机的网络里，
+// 启动容器用的东西。虚拟机里的 vminitd 自己启动的容器都在虚拟机的网络里，
 // 没法每个一个网络；所以让它改用 runc 来启动（LinuxPod 的 ociRuntimePath），前面垫一层 napbox 自己的程序
 // （guard/runtime.go，就是 napbox-guard 换个名字），建服务的容器时给它接上自己的网络。
 // 这一层、runc、每个服务的地址（net.json）放在一块单独的盘上，这块盘算作 pod 里的一个容器，虚拟机里就看得到它。

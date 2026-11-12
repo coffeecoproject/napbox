@@ -14,7 +14,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.35.2"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.8.2"),
         .package(url: "https://github.com/jpsim/Yams.git", from: "6.2.2"),
-        // LinuxPod 是实验 API，锁定版本（DESIGN.md 第 3 节）
+        // LinuxPod 是实验 API，锁定版本
         .package(url: "https://github.com/apple/containerization.git", exact: "0.53.0"),
         // 建空的 ext4 数据卷要用它的 FilePath（Containerization 本身也依赖它）
         .package(url: "https://github.com/apple/swift-system.git", from: "1.6.4"),

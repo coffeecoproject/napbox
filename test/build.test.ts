@@ -356,7 +356,7 @@ describe("镜像构建", { concurrency: false }, () => {
 
 // 命名卷带镜像内容时不常见但会碰到的文件：硬链接（pnpm 装的依赖全是）、带 setuid 位的程序、文件的 capabilities、
 // 粘滞位目录，还有镜像里挂载路径本身是符号链接。拉来的镜像里凑不齐，自己构建一个。
-// 管道、设备文件不考：框架解包镜像时就跳过了它们（DESIGN.md 第 8 节），容器里本来就没有。
+// 管道、设备文件不考：框架解包镜像时就跳过了它们，容器里本来就没有。
 describe("新的命名卷带上自建镜像里的特殊文件", { concurrency: false }, () => {
   const dir = path.join(work, "special");
   const target = { cwd: dir };

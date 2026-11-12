@@ -1,5 +1,5 @@
 // 一个环境在磁盘上的东西：每个服务的根文件系统、命名卷、日志。都在 environments/<环境 ID>/ 下。
-// 休眠只停虚拟机，这些都保留（DESIGN.md 第 3 节）。
+// 休眠只停虚拟机，这些都保留。
 import Containerization
 import ContainerizationEXT4
 import CryptoKit
@@ -13,7 +13,7 @@ struct EnvironmentLayout: Sendable {
     /// 根文件系统和数据卷都是稀疏文件，写多少占多少
     static let rootfsBytes: UInt64 = 8 * 1024 * 1024 * 1024
     static let volumeBytes: UInt64 = 32 * 1024 * 1024 * 1024
-    /// 磁盘都开日志：虚拟机没正常停（napboxd 崩溃、被强杀）时，没日志的磁盘会不一致，环境再也起不来（DESIGN.md 第 2 节）
+    /// 磁盘都开日志：虚拟机没正常停（napboxd 崩溃、被强杀）时，没日志的磁盘会不一致，环境再也起不来
     static let journal = EXT4.JournalConfig.default
 
     init(directory: URL) throws(NapboxError) {
@@ -125,7 +125,7 @@ struct EnvironmentLayout: Sendable {
     }
 
     /// 命名卷：第一次用时建一个空的 ext4。去掉 lost+found，否则 postgres 这类要求目录为空的程序初始化会失败
-    /// （DESIGN.md 第 8 节；Docker 的卷是普通目录，本来就没有它）。
+    /// （Docker 的卷是普通目录，本来就没有它）。
     func volume(_ name: String) throws(NapboxError) -> URL {
         let path = directory.appending(path: Self.volumePath(name))
         if FileManager.default.fileExists(atPath: path.path) { return path }
@@ -143,7 +143,7 @@ struct EnvironmentLayout: Sendable {
         return path
     }
 
-    // 命名卷带上镜像内容（DESIGN.md 第 8 节）。Docker 是建容器时看一次：卷是空的、镜像里有这个目录就复制。
+    // 命名卷带上镜像内容。Docker 是建容器时看一次：卷是空的、镜像里有这个目录就复制。
     // 这里的“建容器”是解出新的根文件系统，所以按“这个服务现在的根文件系统对这个卷看过没有”记：看过就不再看，
     // 休眠唤醒不会把已经清空的卷又填上（和 docker stop、start 一样）；根文件系统重建、卷重新建了就作废。
 
