@@ -1,0 +1,28 @@
+{
+  "name": "napbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local dev environments for coding agents on Apple silicon Macs, without Docker: an isolated set of compose services for every git worktree.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=22.22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "scripts/test-client.sh",
+    "plugins": "node scripts/plugins.ts",
+    "package": "node scripts/pack.ts"
+  },
+  "dependencies": {
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "typescript": "7.0.2"
+  }
+}

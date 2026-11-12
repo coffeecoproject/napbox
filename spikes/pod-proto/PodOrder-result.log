@@ -1,0 +1,28 @@
+[ 79.91s] 准备完成
+[ 79.91s] ===== A. 首次启动，按依赖顺序
+[ 80.38s] postgres 已启动，等健康
+[ 81.08s] postgres 健康：true；此时 app 在监听：false（应为 false）
+[ 81.08s] 故意再等 5 秒，模拟依赖服务健康检查慢
+[ 86.21s] init 退出码：0
+[ 86.26s] init 退出后：postgres 健康 true，guard 能执行命令 true，容器列表 ["app", "guard", "init", "postgres", "worker"]
+[ 86.33s] app、worker 已启动，8080 开始监听：true
+[ 90.51s] [A 全部起来 3 秒后，当前 1794035697] postgres 健康：true | app 8080 在监听：true | app 回应：ok | worker：在运行（等待超时：timeout: "failed to wait for process exit within timeout of 1 seconds" (cause: "），心跳 1794035698 | init_runs 行数：1
+[ 90.52s] 对已退出的 init 再 waitContainer：已退出(0)
+[ 90.53s] stopContainer(已退出的 init)：成功
+[ 91.63s] [A 清理 init 之后] postgres 健康：true | app 8080 在监听：true | app 回应：ok | worker：在运行（等待超时：timeout: "failed to wait for process exit within timeout of 1 seconds" (cause: "），心跳 1794035699 | init_runs 行数：1
+[ 91.63s] 再次 startContainer(init)：失败（预期）invalidState: "container init must be in created state to start"
+[ 91.63s] ===== D. worker 崩溃
+[ 92.64s] worker：已退出(137)
+[ 92.76s] [D worker 崩溃后] postgres 健康：true | app 8080 在监听：true | app 回应：ok | worker：已退出(137)，心跳 错误: internalError: "failed to start process" (cause: "internalError: "startProcess: failed to start process: internalError: "vmexec error: internalError: " Error Domain=NSPOSIXErrorDomain Code=3 "No such process""" (cause: "internalError: "no PID data from sync pipe"")"") | init_runs 行数：1
+[ 92.88s] A 休眠：停止整个环境 0.12s（含一个已退出、一个已崩溃的容器）
+[ 92.88s] ===== B. 唤醒，init 加入但不启动
+[ 93.62s] 唤醒：postgres 健康 true，app 监听 true，共 0.74s
+[ 96.78s] [B 唤醒后（init_runs 应仍为 1）] postgres 健康：true | app 8080 在监听：true | app 回应：ok | worker：在运行（等待超时：timeout: "failed to wait for process exit within timeout of 1 seconds" (cause: "），心跳 1794035704 | init_runs 行数：1
+[ 96.78s] 没启动过的 init：没有进程（notFound: "container init not found or not started"）
+[ 96.91s] B 休眠：停止 0.13s（含一个从没启动的容器）
+[ 96.91s] ===== C. 一次性服务失败
+[ 97.60s] postgres 健康：true
+[ 98.64s] bad 退出码：3；按 compose 语义，依赖它的 app 不启动
+[ 99.72s] bad 失败后：postgres 健康 true，app 在监听 false（应为 false），guard 能执行 true
+[ 99.82s] C 停止 0.09s
+[ 99.82s] 全部结束

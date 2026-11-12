@@ -1,0 +1,83 @@
+# napbox
+
+[English](README.md)
+
+给 coding agent 用的 Mac 本地开发环境，不用 Docker，只支持 Apple 芯片。
+
+napbox 按项目的 compose 文件，给每个 git worktree 起一套隔离的服务（数据库、对象存储、后端）。宿主机端口由 napbox 分配，同一个环境的端口固定不变。闲置的环境自动休眠，下次有连接进来时自动唤醒。agent 通过 MCP 工具使用它，项目脚本用 `napbox` 命令。
+
+底层是苹果开源的 [Containerization](https://github.com/apple/containerization)：一个环境一台轻量的 Linux 虚拟机，环境里的服务都在这台虚拟机里。
+
+**状态：0.1.0，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
+
+## 要求
+
+- macOS 26 或更新版本，Apple 芯片
+- Node.js 22.22 或更新版本
+- 用插件需要 Claude Code（`napbox` 命令不依赖它）
+
+## 安装
+
+在 Claude Code 里：
+
+```
+/plugin marketplace add coffeecoproject/napbox
+/plugin install napbox@napbox
+```
+
+agent 第一次要起服务时，napbox 会报还没准备好，agent 就去调用 `setup` 工具（Claude Code 会先问你）。setup 会：
+
+- 从 GitHub 下载 Kata Containers 的内核包（约 700MB，按固定的校验值核对）和 runc（约 10MB），从 ghcr.io 拉取 vminit 镜像；
+- 没装 Rosetta 时请 macOS 安装（虚拟机里运行 x86 的程序要用）；
+- 把 `napboxd` 放到 `~/Library/Application Support/napbox/`，注册成登录项（`~/Library/LaunchAgents/io.github.coffeecoproject.napbox.plist`）。
+
+不用 Claude Code 的话：`npx napbox setup`。
+
+## 怎么工作
+
+- **一个 worktree 一个环境。** 环境叫 `<项目>/<worktree>`，主工作区是 `<项目>/main`。同一个项目的两个 worktree 可以同时运行，端口不冲突。
+- **端口。** compose 里只写容器端口（`- "5432"`）。napbox 在 `127.0.0.1` 上分一个宿主机端口，这个环境一直用它：休眠、唤醒、再次 `up`、napboxd 重启、换 profile 都不变，`down` 了才释放。别的 worktree 和临时环境是别的端口，所以要从 `napbox env` 读，不要写死。
+- **休眠。** 30 分钟没有连接就休眠，内存还给 macOS。下次连它的端口就自动唤醒，第一条连接要等约 1 秒。
+- **临时环境。** `napbox up --temp <名字>` 在开发环境旁边另起一个用完就扔的环境（比如测试用的空库），`napbox down --temp <名字>` 删掉它。`napbox run <服务>` 临时起一个环境，在前台跑一个服务，返回它的退出码。
+- **构建。** 写了 `build:` 的服务在单独的虚拟机里用 BuildKit 构建，所有环境共用一份构建缓存。
+- **网络。** 环境访问不到宿主机和局域网。`napbox egress none` 还会断开外网，只剩同一个环境里的服务能互相访问。
+
+## 命令
+
+命令都输出 JSON（`napbox status --text` 输出表格）。
+
+| 命令 | 作用 |
+|---|---|
+| `napbox up [-f compose] [--build] [--profile P]` | 创建或唤醒环境，等服务都就绪，输出端口和变量 |
+| `napbox env` | 输出 `export NAPBOX_<服务>_<端口>=127.0.0.1:<端口>`，可以直接 `eval "$(napbox env)"` |
+| `napbox status [--text]` | napboxd 和各环境的状态、端口 |
+| `napbox logs <服务> [--tail N] [-f]` | 服务的日志，不唤醒环境 |
+| `napbox exec <服务> -- <命令>` | 在服务里执行命令（不支持交互） |
+| `napbox run <服务> [-- <命令>]` | 在临时环境里把一个服务跑一次 |
+| `napbox reset <数据卷>` | 清空一个命名卷（旧数据保留 7 天） |
+| `napbox sleep` / `napbox down` | 马上休眠 / 回收环境（数据保留 7 天） |
+| `napbox egress <open\|none>` | 切换能不能上外网 |
+| `napbox image import <镜像>` | 从本机 Docker 导入镜像，给仓库里已经拉不到的镜像用 |
+
+`up`、`env`、`logs`、`exec`、`egress`、`down` 可以加 `--temp <名字>`。
+
+## 支持的 compose 写法
+
+本地开发的 compose 常用的写法都支持。别的写法直接报错，说清楚是哪里、为什么，不会悄悄忽略。
+
+支持：`image`、`build`（`context`、`dockerfile`、`target`、`args`）、`command`、`entrypoint`、`environment`、`env_file`、`working_dir`、`init`、`shm_size`、`tmpfs`、`pull_policy`、`stop_grace_period`、`ports`（只取容器端口）、`expose`、`volumes`（命名卷、目录和单个文件）、带条件的 `depends_on`、`healthcheck`、`restart`、`profiles`、`develop.watch`、`secrets`（文件形式）、内存上限、默认网络、变量替换、多份 compose 合并、YAML 合并键。
+
+不支持的有：`read_only`、`cpus`、`pids_limit`、`security_opt`、`platform`、`privileged`、`cap_add: NET_ADMIN`、`network_mode`、多个网络、`configs`，以及上面四个以外的 `build` 选项。
+
+## 和 Docker 不一样的地方
+
+- 不能单独重启一个服务。一个服务按 `restart` 重启时，整个环境一起重启。建库、跑迁移这类准备工作写成一次性服务，后端用 `condition: service_completed_successfully` 等它跑完。
+- 环境之间互相访问不到。同一个环境里的服务可以用服务名互相访问。
+- `exec` 没有交互终端。
+- 构建时用不了本机 Docker 的登录信息和本地镜像：`FROM` 要能从公开仓库拉到。
+- napbox 不导出镜像，发布用的镜像要用别的工具打包，比如苹果的 `container`。
+- 内存只在环境休眠时才还给 macOS。
+
+## 许可证
+
+[Apache License 2.0](LICENSE)。npm 包里带了第三方代码，见 [NOTICE](NOTICE)。

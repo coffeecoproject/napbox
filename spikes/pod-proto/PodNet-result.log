@@ -1,0 +1,18 @@
+pod 已启动 0.5s
+[服务都在跑] redis-cli ping → exit=0 PONG
+[服务都在跑] pg_isready → exit=0 127.0.0.1:5432 - accepting connections
+[共享网络] busybox 连 127.0.0.1:6379 → exit=0 
+[共享网络] busybox 连 127.0.0.1:5432 → exit=0 
+[端口冲突] busybox 再监听 6379（exit=1 表示被占）→ exit=1 nc: bind: Address already in use
+[IP] busybox ip addr → exit=0 inet 127.0.0.1/8 scope host lo     inet 192.168.64.210/24 scope global eth0
+[出网] busybox 连 1.1.1.1:80 → exit=0 
+[到宿主机] busybox 连网关 192.168.64.1:22 → exit=0 
+[跨虚拟机] 环境 A 连环境 B 192.168.64.211:6379 → exit=1 
+READY 宿主机可测 192.168.64.210 和 .211，等待 25s
+[单服务重启] 同名直接 start：失败 invalidState: "container redis must be in created state to start"
+[单服务重启] 换名字重新加入：失败 unsupported: "hotplug not supported"
+全部停止
+--- 第二次（环境 B 等 8 秒并自测）
+[环境 B 自己] redis-cli ping → PONG
+[跨虚拟机] 环境 A 连环境 B 192.168.64.211:6379 → exit=1 
+宿主机直连 192.168.64.210:6379、:5432、192.168.64.211:6379 都通

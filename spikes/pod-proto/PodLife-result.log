@@ -1,0 +1,18 @@
+[首次启动（含初始化数据库）] 虚拟机和容器起来 0.50s，postgres 能连 1.20s，宿主机连 5432：通
+[写数据] (0, "CREATE TABLE\nINSERT 0 1")
+[DNS 配置] (0, "cat: can\'t open \'/etc/resolv.conf\': No such file or directory")
+[解析域名] (0, "nslookup: write to \'127.0.0.1\': Connection refused ;; connection timed out; no servers could be reached")
+[用网关做 DNS 解析] (0, "Name:\tdl-cdn.alpinelinux.org Address: 198.18.0.39")
+[装 iptables] (0, "/sbin/iptables")
+[规则前] 连宿主机 22： 通 | 连外网 1.1.1.1:80： 通
+[install] 连宿主机 22： 不通 | 连外网： 通 | 宿主机连 6379： 通 | 环境内 redis： 通
+[none] 连外网： 不通 | 宿主机连 6379： 通 | 宿主机连 5432： 通 | 环境内 redis： 通
+[没权限的容器改规则] (0, "没有iptables")
+[休眠] 停止整个环境 0.13s，宿主机连 5432：通
+[唤醒] 虚拟机和容器起来 0.48s，postgres 能连 0.65s，宿主机连 5432：通
+[数据还在] (0, "still-here")
+[唤醒后规则] (0, "1\n/sbin/iptables")
+[模拟崩溃] 杀 redis： 0
+[崩溃后整个重启] 虚拟机和容器起来 0.46s，postgres 能连 0.60s，宿主机连 5432：通
+[崩溃后整个重启] 含停止，总计 0.71s（停止 0.09s）
+全部停止

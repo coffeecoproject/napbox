@@ -1,0 +1,7 @@
+.DS_Store
+native/.build/
+native/.swiftpm/
+spikes/pod-proto/.build/
+node_modules/
+.pack/
+notes/

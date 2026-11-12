@@ -1,0 +1,28 @@
+{
+  "description": "会话开始和压缩后告诉 agent 端口；已接入的项目拦下 docker compose up。",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/napbox.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/napbox.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

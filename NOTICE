@@ -1,0 +1,13 @@
+napbox
+Copyright 2026 The napbox Authors
+
+This product includes software developed by others. The npm package bundles
+compiled programs that contain:
+
+- Apple Containerization (Apache License 2.0) and the Swift packages it and
+  napbox depend on (SwiftNIO, gRPC Swift, Swift Protobuf, Swift Crypto, Yams,
+  zstd and others), in napbox and napboxd.
+- Go modules (google/nftables, mdlayher/netlink, mdlayher/socket, golang.org/x)
+  and the Go standard library, in napbox-guard.
+
+Their licenses and notices are in THIRD_PARTY_NOTICES.txt in the npm package.
