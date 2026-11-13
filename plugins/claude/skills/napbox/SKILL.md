@@ -31,6 +31,7 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 ## 常见情况
 
 - **前端、小程序、App 要连环境里的后端**：它们跑在本机，不在环境里，后端地址要由项目的启动脚本交给它们。脚本从 `npx napbox up` 返回的 JSON（或 `npx napbox env`）里取出后端的地址：网页前端（vite 这类）用环境变量传进去；读不到环境变量的（微信小程序、手机 App）由脚本生成一份本地配置文件，加进 `.gitignore`，不提交。缺这份文件时明确报错、提示先运行启动脚本，不要悄悄回退到原来的地址。单元测试自己给一个固定地址，不依赖这份文件。不要为了凑回原来的端口去改 compose。
+- **环境里的服务要知道自己在宿主机上的地址**（比如服务端生成给浏览器、小程序打开的图片链接）：在 compose 的 `environment` 或 `env_file` 里写 `PUBLIC_ORIGIN: http://${NAPBOX_API_3100}`，起服务时换成这个环境分到的地址。只能用在这两处，引用的要是这个 compose 里启用的服务在 `ports` 里写的端口；不要让启动脚本先 up 一次取端口再 up 一次。
 - **compose 文件不在默认位置**：给 `up` 传 `files`，或者在 worktree 根目录写 `.napbox.yaml`，内容是 `compose: server/compose.yaml`。
 - **改了 compose**：再调一次 `up`，会按新定义重建。
 - **改了 Dockerfile 或打进镜像的文件**：给 `up` 传 `build: true`，和 `docker compose up --build` 一样。不传时只在镜像还没有时构建。源码挂载进容器的文件不用重新构建。

@@ -111,6 +111,8 @@ services:
     image: alpine:3.20
     # 启动时先输出 300 行，测 logs 默认只给最后 200 行
     command: ["sh", "-c", "seq 1 300; while true; do nc -l -p 9000 -e sh; done"]
+    # 引用这个环境自己的端口变量：起服务时换成宿主机上连它的地址
+    environment: {SELF: "http://\${NAPBOX_PROBE_9000}"}
     ports: ["9000"]
     stop_grace_period: 1s
 volumes:
@@ -133,6 +135,7 @@ check "分到三个端口" test -n "$db" -a -n "$web" -a -n "$probe"
 check "web 经代理回话，根文件系统是新的" test "$(web_says "$web")" = "fresh v1"
 check "seed 等 db 健康后用服务名连上并写入" test "$(sql "$db" 'select count(*) from seeded')" = "1"
 check "写了 .napbox/ports.json" test -f "$repo/.napbox/ports.json"
+check "environment 里引用的端口变量换成了这个环境的地址" test "$(in_env 'echo $SELF')" = "http://127.0.0.1:$probe"
 check ".git/info/exclude 里有 .napbox/" grep -qx ".napbox/" "$repo/.git/info/exclude"
 
 echo "再次 up（在运行、定义没变）"

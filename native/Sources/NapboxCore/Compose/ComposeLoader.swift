@@ -47,7 +47,9 @@ public enum ComposeLoader {
         if let text = try? String(contentsOf: dotEnvURL, encoding: .utf8) {
             for (k, v) in try DotEnv.parse(text, file: dotEnvURL.path, lookup: { input.callerEnvironment[$0] }) { dotEnv[k] = v }
         }
-        let lookup: @Sendable (String) -> String? = { [dotEnv] in input.callerEnvironment[$0] ?? dotEnv[$0] }
+        let lookup: @Sendable (String) -> String? = { [dotEnv] name in
+            PortReferences.isReference(name) ? PortReferences.placeholder(name) : input.callerEnvironment[name] ?? dotEnv[name]
+        }
 
         var issues: [ComposeIssue] = []
         let interpolator = Interpolator(lookup: lookup)

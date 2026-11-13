@@ -342,7 +342,7 @@ describe("假服务端：真实 napboxd 发不出来的回应", () => {
     }
   }
   const status = {
-    version: "0.1.0",
+    version: "0.1.1",
     pid: 1,
     startedAt: "2026-11-08T00:00:00Z",
     environments: [],

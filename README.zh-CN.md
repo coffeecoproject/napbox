@@ -8,7 +8,7 @@ napbox 按项目的 compose 文件，给每个 git worktree 起一套隔离的�
 
 底层是苹果开源的 [Containerization](https://github.com/apple/containerization)：一个环境一台轻量的 Linux 虚拟机，环境里的服务都在这台虚拟机里。
 
-**状态：0.1.0，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
+**状态：0.1.1，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
 
 ## 要求
 
@@ -36,7 +36,7 @@ agent 第一次要起服务时，napbox 会报还没准备好，agent 就去调�
 ## 怎么工作
 
 - **一个 worktree 一个环境。** 环境叫 `<项目>/<worktree>`，主工作区是 `<项目>/main`。同一个项目的两个 worktree 可以同时运行，端口不冲突。
-- **端口。** compose 里只写容器端口（`- "5432"`）。napbox 在 `127.0.0.1` 上分一个宿主机端口，这个环境一直用它：休眠、唤醒、再次 `up`、napboxd 重启、换 profile 都不变，`down` 了才释放。别的 worktree 和临时环境是别的端口，所以要从 `napbox env` 读，不要写死。
+- **端口。** compose 里只写容器端口（`- "5432"`）。napbox 在 `127.0.0.1` 上分一个宿主机端口，这个环境一直用它：休眠、唤醒、再次 `up`、napboxd 重启、换 profile 都不变，`down` 了才释放。别的 worktree 和临时环境是别的端口，所以要从 `napbox env` 读，不要写死。环境里的服务要知道自己在宿主机上的地址时（比如服务端生成给浏览器打开的链接），在 `environment` 或 `env_file` 里写 `${NAPBOX_API_3100}`，起服务时换成这个环境分到的地址（`127.0.0.1:41217`）。
 - **休眠。** 30 分钟没有连接就休眠，内存还给 macOS。下次连它的端口就自动唤醒，第一条连接要等约 1 秒。
 - **临时环境。** `napbox up --temp <名字>` 在开发环境旁边另起一个用完就扔的环境（比如测试用的空库），`napbox down --temp <名字>` 删掉它。`napbox run <服务>` 临时起一个环境，在前台跑一个服务，返回它的退出码。
 - **构建。** 写了 `build:` 的服务在单独的虚拟机里用 BuildKit 构建，所有环境共用一份构建缓存。

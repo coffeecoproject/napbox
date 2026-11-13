@@ -8,7 +8,7 @@ napbox reads a project's compose file and gives every git worktree its own isola
 
 It is built on Apple's open-source [Containerization](https://github.com/apple/containerization) framework: one lightweight Linux VM per environment, with all its services in it.
 
-**Status: 0.1.0, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
+**Status: 0.1.1, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
 
 ## Requirements
 
@@ -36,7 +36,7 @@ Without Claude Code: `npx napbox setup`.
 ## How it works
 
 - **One environment per worktree.** Environments are named `<project>/<worktree>` (the main checkout is `<project>/main`). Two worktrees of the same project run side by side without port clashes.
-- **Ports.** In compose, write only the container port (`- "5432"`). napbox assigns a host port on `127.0.0.1` and keeps it for the environment across sleep, wake, `up` again, napboxd restarts and profile changes. It is released only on `down`. Other worktrees and temporary environments get other ports, so read them from `napbox env` instead of hard-coding them.
+- **Ports.** In compose, write only the container port (`- "5432"`). napbox assigns a host port on `127.0.0.1` and keeps it for the environment across sleep, wake, `up` again, napboxd restarts and profile changes. It is released only on `down`. Other worktrees and temporary environments get other ports, so read them from `napbox env` instead of hard-coding them. When a service needs its own address on the host (for example to build links a browser opens), write `${NAPBOX_API_3100}` in `environment` or `env_file`; napbox replaces it with the address this environment was given (`127.0.0.1:41217`) when the service starts.
 - **Sleep.** After 30 minutes without connections an environment sleeps and its memory goes back to macOS. The next connection to one of its ports wakes it; the first connection waits about a second.
 - **Temporary environments.** `napbox up --temp <name>` starts a throwaway environment next to the dev one (an empty test database, for example), and `napbox down --temp <name>` deletes it. `napbox run <service>` starts a one-off environment, runs one service in the foreground and returns its exit code.
 - **Builds.** `build:` is built inside a dedicated VM with BuildKit; the build cache is shared by all environments.

@@ -40,7 +40,8 @@ struct ContainerPlan: Sendable {
     /// 这个服务是 napbox run 在前台跑的那个时有
     let foreground: ForegroundService?
 
-    init(service s: Service, image: Containerization.Image, layout: EnvironmentLayout,
+    /// - portVariables：这个环境的端口变量，换掉 environment 里引用的（PortReferences）
+    init(service s: Service, image: Containerization.Image, layout: EnvironmentLayout, portVariables: [String: String],
          foreground: ForegroundService? = nil) async throws(NapboxError) {
         name = s.name
         self.foreground = foreground
@@ -58,7 +59,8 @@ struct ContainerPlan: Sendable {
             let parts = kv.split(separator: "=", maxSplits: 1)
             return (String(parts[0]), parts.count > 1 ? String(parts[1]) : "")
         }
-        for (k, v) in s.environment.sorted(by: { $0.key < $1.key }) {
+        for (k, raw) in s.environment.sorted(by: { $0.key < $1.key }) {
+            let v = PortReferences.resolve(raw, portVariables)
             if let i = env.firstIndex(where: { $0.0 == k }) { env[i].1 = v } else { env.append((k, v)) }
         }
         environment = env.map { "\($0)=\($1)" }

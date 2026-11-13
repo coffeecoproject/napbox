@@ -139,6 +139,7 @@ struct ComposeBuilder {
         }
         checkCycles(active)
         checkPortVariables(active)
+        checkPortReferences(active)
         // 没启用的 profile 里的服务也留着端口：换 profile 再 up 时端口不变。run 跑完就销毁，不用留
         let reserved = run != nil ? [] : all.map(\.0).filter { !activeNames.contains($0.name) && !$0.ports.isEmpty }
         return ComposeProject(
@@ -684,6 +685,25 @@ struct ComposeBuilder {
                     issues.append(.unsupported("服务 \(other) 和 \(s.name) 的端口变量都叫 \(name)，请改其中一个服务名"))
                 }
                 owners[name] = s.name
+            }
+        }
+    }
+
+    /// 引用的端口变量（PortReferences）只能用在 environment（含 env_file）里，要是启用的服务在 ports 里写的端口：
+    /// 地址要到起服务时才填，别的字段（镜像、命令、挂载）读 compose 时就要定下来。
+    private mutating func checkPortReferences(_ services: [Service]) {
+        let known = Set(services.flatMap { s in s.ports.map { PortVariables.name(service: s.name, port: $0) } })
+        for s in services {
+            for (k, v) in s.environment.sorted(by: { $0.key < $1.key }) {
+                for name in PortReferences.names(in: v) where !known.contains(name) {
+                    issues.append(.invalid("services.\(s.name).environment.\(k)：\(name) 不是这个环境的端口变量，要是启用的服务在 ports 里写的端口"))
+                }
+            }
+            var rest = s
+            rest.environment = [:]
+            let text = (try? JSONEncoder().encode(rest)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+            if text.contains("\\u0001") {
+                issues.append(.unsupported("services.\(s.name)：NAPBOX_ 开头的端口变量只能用在 environment 和 env_file 里"))
             }
         }
     }

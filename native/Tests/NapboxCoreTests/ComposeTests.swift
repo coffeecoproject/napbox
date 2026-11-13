@@ -612,6 +612,58 @@ extension [ComposeIssue] {
         }
     }
 
+    @Test func portReferences() throws {
+        let files = [
+            "app.env": "LINK=http://${NAPBOX_API_3100}/media\n",
+            "compose.yaml": """
+            services:
+              api:
+                image: node:22
+                ports: ["3100"]
+                env_file: app.env
+                environment:
+                  ORIGIN: http://${NAPBOX_API_3100}
+                  NAPBOX_API_3100:
+                  DB: ${NAPBOX_DB_5432:-unused}
+              db:
+                image: postgres:18
+                ports: ["5432"]
+            """,
+        ]
+        // 调用方环境里同名的变量（eval "$(napbox env)" 带进来的）不用：地址要的是这个环境自己的
+        let p = try load(files, env: ["NAPBOX_API_3100": "127.0.0.1:1"])
+        #expect(p.unsetVariables.isEmpty)
+        let env = try #require(p.service("api")).environment
+        let variables = ["NAPBOX_API_3100": "127.0.0.1:41217", "NAPBOX_DB_5432": "127.0.0.1:41218"]
+        #expect(env.mapValues { PortReferences.resolve($0, variables) } == [
+            "ORIGIN": "http://127.0.0.1:41217", "NAPBOX_API_3100": "127.0.0.1:41217",
+            "DB": "127.0.0.1:41218", "LINK": "http://127.0.0.1:41217/media",
+        ])
+
+        let unknown = try issues(["compose.yaml": """
+            services:
+              api:
+                image: node:22
+                ports: ["3100"]
+                environment:
+                  OTHER: ${NAPBOX_WEB_80}
+            """])
+        #expect(unknown.mentions("services.api.environment.OTHER：NAPBOX_WEB_80 不是这个环境的端口变量"))
+
+        let elsewhere = try issues(["compose.yaml": """
+            services:
+              api:
+                image: node:22
+                ports: ["3100"]
+                command: ["node", "--origin", "${NAPBOX_API_3100}"]
+            """])
+        #expect(elsewhere.mentions("services.api：NAPBOX_ 开头的端口变量只能用在 environment 和 env_file 里"))
+
+        // NAPBOX_ 开头但不是端口变量的，照常取调用方环境
+        let other = try load(["compose.yaml": "services:\n  api:\n    image: node:${NAPBOX_TAG}\n"], env: ["NAPBOX_TAG": "22"])
+        #expect(other.service("api")?.image == "node:22")
+    }
+
     @Test func explicitAndMissing() throws {
         try withProject(["server/compose.yaml": ""]) { root in
             let found = try ComposeFiles.resolve(explicit: ["server/compose.yaml"], cwd: root, worktree: root)
