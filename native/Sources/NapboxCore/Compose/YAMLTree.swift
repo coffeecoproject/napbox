@@ -55,6 +55,12 @@ indirect enum YAMLTree: Equatable, Sendable {
     private static let nullWords: Set<String> = ["", "~", "null", "Null", "NULL"]
 
     private static func convert(_ node: Node, path: String, file: String, issues: inout [ComposeIssue]) -> YAMLTree {
+        // 自己加的标签（compose 的 !reset、!override）会改变合并的结果，这里不支持：报出来，不当成普通的值
+        let tag = node.tag.rawValue
+        if !tag.isEmpty, tag != "!", !tag.hasPrefix("tag:yaml.org,2002:") {
+            issues.append(.unsupported("\(file)：\(path.isEmpty ? "最外层" : path)：不支持 YAML 标签 \(tag)"))
+            return .null
+        }
         switch node {
         case .scalar(let s):
             let quoted = s.style == .singleQuoted || s.style == .doubleQuoted

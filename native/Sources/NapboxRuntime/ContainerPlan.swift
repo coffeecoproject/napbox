@@ -55,9 +55,10 @@ struct ContainerPlan: Sendable {
         stopSignal = settings.stopSignal
         rootfs = try await layout.rootfs(s.name, image: image, definition: try Self.definition(s))
 
-        var env: [(String, String)] = (imageConfig.env ?? []).map { kv in
-            let parts = kv.split(separator: "=", maxSplits: 1)
-            return (String(parts[0]), parts.count > 1 ? String(parts[1]) : "")
+        // 按第一个 = 拆；没有名字的条目（空的、= 开头的）不是环境变量，不要
+        var env: [(String, String)] = (imageConfig.env ?? []).compactMap { kv in
+            let name = kv.prefix { $0 != "=" }
+            return name.isEmpty ? nil : (String(name), String(kv.dropFirst(name.count + 1)))
         }
         for (k, raw) in s.environment.sorted(by: { $0.key < $1.key }) {
             let v = PortReferences.resolve(raw, portVariables)

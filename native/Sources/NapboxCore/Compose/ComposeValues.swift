@@ -4,7 +4,7 @@ import Foundation
 enum ComposeValues {
     /// "1m30s"、"500ms"、"1.5s"；纯数字按秒。
     static func seconds(_ text: String) -> Double? {
-        if let n = Double(text) { return n }
+        if let n = Double(text) { return n.isFinite ? n : nil }
         let units: [(String, Double)] = [("ns", 1e-9), ("us", 1e-6), ("µs", 1e-6), ("ms", 1e-3), ("s", 1), ("m", 60), ("h", 3600)]
         var rest = Substring(text)
         var total = 0.0
@@ -28,7 +28,8 @@ enum ComposeValues {
         if body.hasSuffix("b") { body = body.dropLast() }
         let multipliers: [Character: Double] = ["k": 1024, "m": 1024 * 1024, "g": 1024 * 1024 * 1024, "t": 1024 * 1024 * 1024 * 1024]
         if let unit = body.last, let m = multipliers[unit], let n = Double(body.dropLast()), n >= 0 {
-            return UInt64(n * m)
+            // inf、1e30g 这类转不成 UInt64 的算写法不对（直接转会让进程崩溃）
+            return UInt64(exactly: (n * m).rounded(.down))
         }
         if let n = UInt64(body) { return n }
         return nil

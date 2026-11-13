@@ -14,6 +14,18 @@ public enum StartOrder {
         return result
     }
 
+    /// 服务自己和它直接、间接依赖的服务（depends_on 一路往下）。唤醒时连接等的就是这些服务就绪。
+    public static func dependencies(of name: String, in services: [Service]) -> Set<String> {
+        let byName = Dictionary(uniqueKeysWithValues: services.map { ($0.name, $0) })
+        var result = Set<String>()
+        var pending = [name]
+        while let next = pending.popLast() {
+            guard result.insert(next).inserted else { continue }
+            pending += byName[next]?.dependsOn.map(\.service) ?? []
+        }
+        return result
+    }
+
     /// 按依赖分层：不依赖别的服务的在第 0 层，其余在它依赖的最深一层的下一层；层内按名字排。
     /// 停服务时倒过来一层一层停（和 docker compose 一样先停依赖别人的）。
     public static func levels(_ services: [Service]) -> [[Service]] {

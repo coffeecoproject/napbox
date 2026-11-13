@@ -37,7 +37,7 @@ Without Claude Code: `npx napbox setup`.
 
 - **One environment per worktree.** Environments are named `<project>/<worktree>` (the main checkout is `<project>/main`). Two worktrees of the same project run side by side without port clashes.
 - **Ports.** In compose, write only the container port (`- "5432"`). napbox assigns a host port on `127.0.0.1` and keeps it for the environment across sleep, wake, `up` again, napboxd restarts and profile changes. It is released only on `down`. Other worktrees and temporary environments get other ports, so read them from `napbox env` instead of hard-coding them. When a service needs its own address on the host (for example to build links a browser opens), write `${NAPBOX_API_3100}` in `environment` or `env_file`; napbox replaces it with the address this environment was given (`127.0.0.1:41217`) when the service starts.
-- **Sleep.** After 30 minutes without connections an environment sleeps and its memory goes back to macOS. The next connection to one of its ports wakes it; the first connection waits about a second.
+- **Sleep.** After 30 minutes without connections an environment sleeps and its memory goes back to macOS. The next connection to one of its ports wakes it; that connection waits only until the service it connects to (and the services that one depends on) is ready, usually about a second for a database, while the rest of the environment keeps starting. Services start one by one in dependency order, so a service later in that order also waits for the ones before it to start. If any of those services has a `develop.watch` sync rule, the connection waits for the whole environment, so files changed while it slept are already synced.
 - **Temporary environments.** `napbox up --temp <name>` starts a throwaway environment next to the dev one (an empty test database, for example), and `napbox down --temp <name>` deletes it. `napbox run <service>` starts a one-off environment, runs one service in the foreground and returns its exit code.
 - **Builds.** `build:` is built inside a dedicated VM with BuildKit; the build cache is shared by all environments.
 - **Network.** Environments cannot reach the host or the local network. `napbox egress none` also cuts off the internet, leaving only the services in the same environment.
@@ -67,12 +67,14 @@ napbox supports what local dev compose files commonly use, and rejects everythin
 
 Supported: `image`, `build` (`context`, `dockerfile`, `target`, `args`), `command`, `entrypoint`, `environment`, `env_file`, `working_dir`, `init`, `shm_size`, `tmpfs`, `pull_policy`, `stop_grace_period`, `ports` (container port only), `expose`, `volumes` (named volumes, directories and single files), `depends_on` with conditions, `healthcheck`, `restart`, `profiles`, `develop.watch`, `secrets` (file form), memory limits, the default network, variable substitution, multiple compose files and YAML merge keys.
 
-Not supported, among others: `read_only`, `cpus`, `pids_limit`, `security_opt`, `platform`, `privileged`, `cap_add: NET_ADMIN`, `network_mode`, more than one network, `configs`, and `build` options beyond the four above.
+Not supported, among others: `read_only`, `cpus`, `pids_limit`, `security_opt`, `platform`, `privileged`, `cap_add: NET_ADMIN`, `network_mode`, `configs`, the `!reset` and `!override` YAML tags, and `build` options beyond the four above.
 
 ## Differences from Docker
 
 - A single service cannot be restarted on its own. When a service restarts under its `restart` policy, the whole environment restarts. Put setup work (create databases, run migrations) in one-shot services that the backend waits for with `condition: service_completed_successfully`.
 - Environments cannot reach each other. Services inside one environment can, by service name.
+- Several networks are merged into one: all services of an environment can reach each other, and `internal: true` on a network has no effect. To cut off the internet, use `napbox egress none` for the whole environment.
+- `napbox run` gives the service its host ports, unlike `docker compose run`.
 - `exec` has no interactive terminal.
 - Builds cannot use your Docker login or local Docker images: `FROM` must be pullable from a public registry.
 - napbox does not export images. Package release images with another tool, such as Apple's `container`.

@@ -3,11 +3,15 @@
 import Foundation
 
 enum DotEnv {
-    /// 返回按文件顺序的键值。lookup 用来替换值里的变量，文件里前面定义的变量也能用。
+    /// 返回按文件顺序的键值。lookup 用来替换值里的变量，它没有的才用文件里前面定义的（和 compose 一样：
+    /// shell 里的变量优先于 .env 里的）。
     static func parse(_ text: String, file: String, lookup: @escaping (String) -> String?) throws(ComposeError) -> [(String, String)] {
         var result: [(String, String)] = []
         var defined: [String: String] = [:]
-        let interpolator = Interpolator { defined[$0] ?? lookup($0) }
+        let interpolator = Interpolator { lookup($0) ?? defined[$0] }
+        func isKey(_ text: String) -> Bool {
+            !text.isEmpty && text.allSatisfy { $0 == "_" || $0 == "." || $0 == "-" || $0.isLetter || $0.isNumber }
+        }
         var issues: [ComposeIssue] = []
         var chars = Array(text)[...]
         var lineNumber = 1
@@ -28,11 +32,15 @@ enum DotEnv {
             if line.isEmpty || line.hasPrefix("#") { continue }
             if line.hasPrefix("export ") { line = String(line.dropFirst(7)).trimmingCharacters(in: .whitespaces) }
             guard let eq = line.firstIndex(of: "=") else {
+                guard isKey(line) else {
+                    issues.append(.invalid("\(file) 第 \(startLine) 行：看不懂这一行，要写成 KEY=VALUE：\(line)"))
+                    continue
+                }
                 if let v = lookup(line) { result.append((line, v)); defined[line] = v }
                 continue
             }
             let key = line[..<eq].trimmingCharacters(in: .whitespaces)
-            guard !key.isEmpty, key.allSatisfy({ $0 == "_" || $0 == "." || $0 == "-" || $0.isLetter || $0.isNumber }) else {
+            guard isKey(key) else {
                 issues.append(.invalid("\(file) 第 \(startLine) 行：变量名不对：\(key)"))
                 continue
             }
@@ -53,6 +61,8 @@ enum DotEnv {
                             case "n": body.append("\n")
                             case "t": body.append("\t")
                             case "r": body.append("\r")
+                            // 转义出来的 $ 是字面的：写成 $$，后面的变量替换把它还原成一个 $，不当成变量开头
+                            case "$": body.append("$$")
                             default: body.append(c)
                             }
                             escaped = false

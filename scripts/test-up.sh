@@ -160,7 +160,9 @@ check "退出时按镜像的 STOPSIGNAL 停 postgres，正常关闭" db_shut_dow
 start_daemon
 check "重启后环境是休眠" state_is sleeping
 check "连接进来自动唤醒，沿用根文件系统" test "$(web_says "$web")" = "reused v1"
-check "唤醒后在运行" state_is running
+# 连接只等它连的服务：web 回话时环境可能还没起完，status 还是休眠
+wait_state() { for _ in $(seq 1 50); do state_is "$1" && return 0; sleep 0.2; done; return 1; }
+check "唤醒后在运行" wait_state running
 check "唤醒时没有重新执行 seed，数据卷里的数据还在" test "$(sql "$db" 'select count(*) from seeded')" = "1"
 again="$(cd "$repo" && "$napbox" up)"
 check "唤醒后再 up：在运行、定义没变，直接返回" test "$(jq -c .ports <<<"$again")" = "$(jq -c .ports <<<"$up")" -a "$(sql "$db" 'select count(*) from seeded')" = "1"
@@ -835,6 +837,69 @@ for round in 1 2; do
     check "第 $round 轮：销毁" test "$(rpc down "$freshdb_target" | jq -r .result.name)" = race/freshdb
 done
 check "都销毁后 status 里没有环境了" test "$("$napbox" status | jq '.environments | length')" = "0"
+
+echo "唤醒时连接只等它连的服务"
+# 常见的形状：db 一启动就能连；api 依赖 db，每次启动 8 秒后才健康；web 等 api 健康才启动。
+# 连 db 的连接不等 api、web；连 api、web 的等到它们自己就绪；整个环境照样起完。
+# 2026-11-13 之前连接要等整个环境，连数据库的客户端被同环境里启动慢的后端拖到超时。
+# 服务是按依赖顺序一个个启动的：排在“等依赖健康”的服务后面的，哪怕和它没有依赖也跟着等，这里不测那种。
+# synced 写了同步规则：休眠期间改的文件在服务都就绪后才同步进去，连它的连接等到那时，读到的是新文件
+part_repo="$work/partial-wake"
+mkdir -p "$part_repo/src"
+git init -q "$part_repo"
+echo v1 >"$part_repo/src/v.txt"
+cat >"$part_repo/compose.yaml" <<'YAML'
+services:
+  db:
+    image: alpine:3.20
+    command: ["sh", "-c", "while true; do echo db | nc -l -p 8080; done"]
+    ports: ["8080"]
+    stop_grace_period: 1s
+  api:
+    image: alpine:3.20
+    # 根文件系统唤醒时沿用：先删掉上次留下的标记
+    command: ["sh", "-c", "rm -f /ready; sleep 8; touch /ready; while true; do echo api | nc -l -p 8080; done"]
+    ports: ["8080"]
+    depends_on: [db]
+    healthcheck: {test: ["CMD", "test", "-f", "/ready"], interval: 1s, retries: 30}
+    stop_grace_period: 1s
+  web:
+    image: alpine:3.20
+    command: ["sh", "-c", "while true; do echo web | nc -l -p 8080; done"]
+    ports: ["8080"]
+    depends_on: {api: {condition: service_healthy}}
+    stop_grace_period: 1s
+  synced:
+    image: alpine:3.20
+    command: ["sh", "-c", "while true; do nc -l -p 8080 -e cat /app/src/v.txt; done"]
+    ports: ["8080"]
+    stop_grace_period: 1s
+    develop:
+      watch:
+        - {action: sync, path: ./src, target: /app/src, initial_sync: true}
+YAML
+part="$(cd "$part_repo" && "$napbox" up)"
+part_port() { jq -r ".ports[] | select(.service == \"$1\") | .hostPort" <<<"$part"; }
+check "起来了" test "$(jq -r .state <<<"$part")" = running
+check "起来时同步了 synced 的文件" test "$(web_says "$(part_port synced)")" = v1
+(cd "$part_repo" && "$napbox" sleep >/dev/null)
+check "休眠了" state_is sleeping # 前面的环境都已经销毁了，只有这一个
+echo v2 >"$part_repo/src/v.txt"
+SECONDS=0
+said="$(web_says "$(part_port db)")"
+db_took=$SECONDS
+echo "    唤醒到 db 回话 $db_took 秒"
+check "连 db 的连接不等 api：马上转发" test "$said" = db -a "$db_took" -lt 5
+check "这时环境还没起完" state_is sleeping
+# 这时就连 synced（它自己早就绪了），和下面两条同时等
+web_says "$(part_port synced)" >"$work/synced-said" &
+synced_pid=$!
+check "连 api 的连接等到它就绪" test "$(web_says "$(part_port api)")" = api
+check "连 web 的连接等到它就绪" test "$(web_says "$(part_port web)")" = web
+wait "$synced_pid"
+check "连 synced 的连接等到文件同步好，读到休眠期间改的文件" test "$(cat "$work/synced-said")" = v2
+check "整个环境起完了" wait_state running
+check "销毁" sh -c 'cd "$0" && "$1" down >/dev/null' "$part_repo" "$napbox"
 
 echo "虚拟机意外没了"
 # 用命令行、真实 postgres 走一遍：杀掉虚拟机进程后状态对得上，napbox up 能恢复，已提交的数据都在，自动唤醒不重跑一次性服务。

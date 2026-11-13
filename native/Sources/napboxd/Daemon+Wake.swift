@@ -44,16 +44,25 @@ extension Daemon {
     /// 这个环境的 vsock 转发通道（RelayMux），第一个连接来时建。环境重启后虚拟机换了，通道也跟着换；连接失败下次再试。
     private func relay(for name: String, _ environment: RunningEnvironment) async throws -> RelayMux {
         let id = ObjectIdentifier(environment)
-        if let existing = relays[name], existing.environment == id {
-            let relay = try await existing.connecting.value
-            if relay.isActive { return relay }
+        // 别的连接正在连的那条：连上了一起用。没连上或者已经断了：一起等的连接里只有一个去重连，其余的等它那条
+        while let existing = relays[name], existing.environment == id {
+            if let relay = try? await existing.connecting.value, relay.isActive { return relay }
+            if relays[name]?.connecting == existing.connecting { break }
         }
         let connecting = Task { try await RelayMux.connect(try await environment.dialRelay()) }
         relays[name] = (id, connecting)
-        return try await connecting.value
+        do {
+            return try await connecting.value
+        } catch {
+            // 没连上的不留着：下一个连接重新连
+            if relays[name]?.connecting == connecting { relays[name] = nil }
+            throw error
+        }
     }
 
-    /// 新连接：环境在运行就转发；在休眠就先唤醒（连接在这期间等着），就绪后再转发；唤醒失败就断开。
+    /// 新连接：环境在运行就转发；在休眠就先唤醒，连接等它连的服务和这个服务依赖的服务就绪就转发，
+    /// 其余服务在后台接着起（整个环境起完前失败的话，虚拟机停掉，已经转发的连接跟着断开）；唤醒失败就断开。
+    /// 这些服务里有 develop.watch 同步规则的，连接等整个环境起完。
     func route(_ inbound: Channel, name: String, hostPort: Int) async {
         guard let record = store.state.environment(name),
               let assignment = record.activePorts.first(where: { $0.hostPort == hostPort }) else {
@@ -65,19 +74,22 @@ extension Daemon {
         connections.add(name, inbound)
         activity.hold(name)
         defer { activity.release(name) }
-        if running[name] == nil {
+        let environment: RunningEnvironment
+        if let env = running[name] {
+            environment = env
+        } else {
+            let services = record.definition?.services ?? []
+            let needed = StartOrder.dependencies(of: assignment.service, in: services)
+            // 休眠期间改的文件，整个环境起完时才同步进去（startWatching）：要等的服务里有同步规则的，连接等到那时
+            let synced = services.contains { needed.contains($0.name) && $0.watch.contains(where: \.action.syncs) }
             do {
-                try await wake(name)
+                environment = try await wakeup(name).environment(whenReady: synced ? nil : needed)
             } catch {
                 try? await inbound.close()
                 return
             }
         }
         do {
-            guard let environment = running[name] else {
-                try? await inbound.close()
-                return
-            }
             // 连的是这个服务自己的地址：每个服务有自己的网络，同一个端口可以有好几个服务在听
             guard let address = environment.addresses[assignment.service] else {
                 throw NapboxError(.internalError, "运行中的环境里没有服务 \(assignment.service)")
@@ -94,9 +106,32 @@ extension Daemon {
 
     // MARK: - 唤醒和休眠
 
+    /// 连接触发的唤醒：已经有在进行的就等那一次，没有就在后台开始一次。连接只等自己的服务，唤醒本身照样起完整个环境
+    /// （不随连接断开而中止）。
+    private func wakeup(_ name: String) -> StartProgress {
+        if let existing = wakeups[name] { return existing }
+        let progress = StartProgress()
+        wakeups[name] = progress
+        Task {
+            do throws(NapboxError) {
+                try await self.wake(name, progress: progress)
+                if let env = self.running[name] {
+                    progress.finished(.success(env))
+                } else {
+                    progress.finished(.failure(NapboxError(.serviceFailed, "环境 \(name) 唤醒后又停了")))
+                }
+            } catch {
+                progress.finished(.failure(error))
+            }
+            if self.wakeups[name] === progress { self.wakeups[name] = nil }
+        }
+        return progress
+    }
+
     /// 连接或 exec 触发的唤醒：用登记里固定下来的定义把环境起来，已经跑完的一次性服务不再启动。
-    func wake(_ name: String) async throws(NapboxError) {
-        try await serialized(name) { () throws(NapboxError) in try await self.wakeNow(name, cooldown: true) }
+    /// - progress：起到哪了，连接在上面等自己的服务就绪
+    func wake(_ name: String, progress: StartProgress = StartProgress()) async throws(NapboxError) {
+        try await serialized(name) { () throws(NapboxError) in try await self.wakeNow(name, cooldown: true, progress: progress) }
     }
 
     /// 明确要求的唤醒（调用方）：不看冷却，服务都就绪后返回。
@@ -110,7 +145,7 @@ extension Daemon {
     }
 
     /// - cooldown：刚起失败过时不再试（可能就是排在前面的那次，同时进来的连接不用各自起一次）
-    func wakeNow(_ name: String, cooldown: Bool) async throws(NapboxError) {
+    func wakeNow(_ name: String, cooldown: Bool, progress: StartProgress = StartProgress()) async throws(NapboxError) {
         if running[name] != nil { return } // 排队期间别的连接已经把它唤醒了
         if cooldown, let failure = sessions[name]?.lastFailure, Date().timeIntervalSince(failure.at) < Self.launchFailureCooldown {
             throw NapboxError(.serviceFailed, failure.message)
@@ -121,7 +156,7 @@ extension Daemon {
         await wakeSlots.acquire()
         let started = Date()
         do {
-            try await launch(record, project: project, skipping: Set(record.completedServices), purpose: .wake)
+            try await launch(record, project: project, skipping: Set(record.completedServices), purpose: .wake, progress: progress)
             await wakeSlots.release()
             print("环境 \(name) 唤醒用了 \(String(format: "%.2f", Date().timeIntervalSince(started))) 秒")
         } catch {

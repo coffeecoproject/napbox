@@ -96,11 +96,11 @@ struct ComposeBuilder {
                 return nil
             }
             // 和 compose run 一样：点名要跑的服务，它的 profile 跟着启用（它依赖的服务不会因此启用别的 profile）；
-            // 命令换成给的（entrypoint 不变）；不给它分配宿主机端口
+            // 命令换成给的（entrypoint 不变）。端口照常分配：这点和 compose run 不同，它写的端口都有端口变量，
+            // environment 里引用自己地址的（PortReferences）在 run 里一样有值
             activeProfiles.formUnion(all[i].profiles)
             if !run.command.isEmpty { all[i].0.command = run.command }
             if run.noDeps { all[i].0.dependsOn = [] }
-            all[i].0.ports = []
         }
         var active = all.filter { s in
             s.profiles.isEmpty || activeProfiles.contains("*") || !activeProfiles.isDisjoint(with: s.profiles)

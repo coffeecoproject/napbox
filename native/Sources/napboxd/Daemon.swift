@@ -14,6 +14,8 @@ actor Daemon {
     let runtime: Runtime
     /// 正在运行的环境
     var running: [String: RunningEnvironment] = [:]
+    /// 连接触发的、正在进行的唤醒：同时进来的连接等同一次唤醒，各自等自己的服务就绪
+    var wakeups: [String: StartProgress] = [:]
     /// 每个环境的 vsock 转发通道，连同它属于哪个 RunningEnvironment
     var relays: [String: (environment: ObjectIdentifier, connecting: Task<RelayMux, Error>)] = [:]
     /// 每个环境的端口监听（宿主机端口 → 监听 channel），从登记到回收一直在

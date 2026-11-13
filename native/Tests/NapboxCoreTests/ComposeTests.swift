@@ -459,7 +459,7 @@ extension [ComposeIssue] {
         #expect(p.services.map(\.name).sorted() == ["db", "init", "test"], "它自己的 profile 不用写；没用到的 web 不起，写错了也不管")
         let test = try #require(p.services.first { $0.name == "test" })
         #expect(test.command == ["sh", "-c", "echo from-compose"])
-        #expect(test.ports.isEmpty, "前台的服务不分配宿主机端口")
+        #expect(test.ports == [80], "前台的服务照常分配端口")
         #expect(p.services.first { $0.name == "db" }?.ports == [5432], "它依赖的服务照常")
         #expect(p.services.allSatisfy { $0.restart == .no && $0.watch.isEmpty }, "跑完就销毁，中途不重启")
         #expect(p.volumes.sorted() == ["out", "pgdata"])
@@ -565,6 +565,9 @@ extension [ComposeIssue] {
         #expect(StartOrder.order(p.services).map(\.name) == ["cache", "db", "init", "app", "lone"])
         // 停的时候倒过来一层一层停：app 在 init 之后、init 在 db 之后
         #expect(StartOrder.levels(p.services).map { $0.map(\.name) } == [["cache", "db", "lone"], ["init"], ["app"]])
+        // 唤醒时连接只等它连的服务和它依赖的
+        #expect(StartOrder.dependencies(of: "app", in: p.services) == ["app", "init", "db", "cache"])
+        #expect(StartOrder.dependencies(of: "db", in: p.services) == ["db"])
     }
 
     @Test func portVariableNames() {
@@ -580,7 +583,7 @@ extension [ComposeIssue] {
             "docker-compose.override.yml": "services: {}",
             "sub/deeper/file.txt": "",
         ]) { root in
-            let found = try ComposeFiles.resolve(explicit: [], cwd: root.appending(path: "sub/deeper"), worktree: root)
+            let found = try ComposeFiles.resolve(explicit: [], environment: [:], cwd: root.appending(path: "sub/deeper"), worktree: root)
             #expect(found.map(\.lastPathComponent) == ["docker-compose.yml", "docker-compose.override.yml"])
         }
     }
@@ -590,14 +593,14 @@ extension [ComposeIssue] {
         try withProject(["real/compose.yaml": "services: {}", "real/sub/x": ""]) { dir in
             let link = dir.appending(path: "link")
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: dir.appending(path: "real"))
-            let found = try ComposeFiles.resolve(explicit: [], cwd: link.appending(path: "sub"), worktree: dir.appending(path: "real"))
+            let found = try ComposeFiles.resolve(explicit: [], environment: [:], cwd: link.appending(path: "sub"), worktree: dir.appending(path: "real"))
             #expect(found.map(\.lastPathComponent) == ["compose.yaml"])
         }
     }
 
     @Test func preferComposeYaml() throws {
         try withProject(["compose.yaml": "", "docker-compose.yml": ""]) { root in
-            let found = try ComposeFiles.resolve(explicit: [], cwd: root, worktree: root)
+            let found = try ComposeFiles.resolve(explicit: [], environment: [:], cwd: root, worktree: root)
             #expect(found.map(\.lastPathComponent) == ["compose.yaml"])
         }
     }
@@ -607,7 +610,7 @@ extension [ComposeIssue] {
             ".napbox.yaml": "compose: [server/compose.yaml, server/compose.dev.yaml]\n",
             "server/compose.yaml": "", "server/compose.dev.yaml": "",
         ]) { root in
-            let found = try ComposeFiles.resolve(explicit: [], cwd: root, worktree: root)
+            let found = try ComposeFiles.resolve(explicit: [], environment: [:], cwd: root, worktree: root)
             #expect(found.map { $0.path.replacingOccurrences(of: root.path + "/", with: "") } == ["server/compose.yaml", "server/compose.dev.yaml"])
         }
     }
@@ -666,10 +669,10 @@ extension [ComposeIssue] {
 
     @Test func explicitAndMissing() throws {
         try withProject(["server/compose.yaml": ""]) { root in
-            let found = try ComposeFiles.resolve(explicit: ["server/compose.yaml"], cwd: root, worktree: root)
+            let found = try ComposeFiles.resolve(explicit: ["server/compose.yaml"], environment: [:], cwd: root, worktree: root)
             #expect(found.count == 1)
-            #expect { try ComposeFiles.resolve(explicit: ["nope.yaml"], cwd: root, worktree: root) } throws: { ($0 as? NapboxError)?.code == "compose_not_found" }
-            #expect { try ComposeFiles.resolve(explicit: [], cwd: root, worktree: root) } throws: { ($0 as? NapboxError)?.code == "compose_not_found" }
+            #expect { try ComposeFiles.resolve(explicit: ["nope.yaml"], environment: [:], cwd: root, worktree: root) } throws: { ($0 as? NapboxError)?.code == "compose_not_found" }
+            #expect { try ComposeFiles.resolve(explicit: [], environment: [:], cwd: root, worktree: root) } throws: { ($0 as? NapboxError)?.code == "compose_not_found" }
         }
     }
 }

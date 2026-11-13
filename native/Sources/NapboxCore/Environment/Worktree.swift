@@ -35,7 +35,7 @@ public struct WorktreeLocation: Equatable, Sendable {
 }
 
 /// worktree 持有的环境，它的 worktree 还在不在。
-/// 只有确定不在了才算 gone；git 查不了时是 unknown，这次不回收，免得误删还在用的环境。
+/// 只有确定不在了才算 gone；git 查不了、所在的卷没挂载时是 unknown，这次不回收，免得误删还在用的环境。
 public enum WorktreePresence: Equatable, Sendable {
     case present
     /// 不在了，附上原因
@@ -44,8 +44,12 @@ public enum WorktreePresence: Equatable, Sendable {
     case unknown(String)
 
     /// - worktree、mainRepository：登记里的绝对路径
-    public static func check(worktree: String, mainRepository: String) -> WorktreePresence {
+    public static func check(worktree: String, mainRepository: String, volumesRoot: String = "/Volumes") -> WorktreePresence {
         let fm = FileManager.default
+        // 外接盘、磁盘映像、网络盘都挂在 /Volumes/<卷名>：挂载点不在就是卷没挂上，下面的目录看不到不代表删了
+        for path in [worktree, mainRepository] {
+            if let volume = unmountedVolume(of: path, volumesRoot: volumesRoot) { return .unknown("\(path) 所在的卷 \(volume) 没挂载") }
+        }
         guard fm.fileExists(atPath: worktree) else { return .gone("目录 \(worktree) 不在了") }
         guard fm.fileExists(atPath: mainRepository + "/.git") else { return .gone("主仓库 \(mainRepository) 不在了") }
         let output: String
@@ -60,6 +64,13 @@ public enum WorktreePresence: Equatable, Sendable {
         let paths = output.split(separator: "\0").filter { $0.hasPrefix("worktree ") }
             .map { canonical(String($0.dropFirst("worktree ".count))) }
         return paths.contains(canonical(worktree)) ? .present : .gone("\(worktree) 不在主仓库的 git worktree list 里了")
+    }
+
+    /// path 在 `<volumesRoot>/<卷名>/` 下面而这个挂载点不在时，返回挂载点
+    private static func unmountedVolume(of path: String, volumesRoot: String) -> String? {
+        guard path.hasPrefix(volumesRoot + "/"), let name = path.dropFirst(volumesRoot.count + 1).split(separator: "/").first else { return nil }
+        let volume = "\(volumesRoot)/\(name)"
+        return FileManager.default.fileExists(atPath: volume) ? nil : volume
     }
 }
 

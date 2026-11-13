@@ -132,14 +132,20 @@ public final class StateStore {
         var version: Int
     }
 
-    /// 文件不存在就从空状态开始；文件坏了或格式版本不对直接报错，不覆盖（里面有端口登记）。
+    /// 文件不存在就从空状态开始；文件读不了、坏了或格式版本不对直接报错，不覆盖（里面有端口登记）。
     public init(url: URL) throws(NapboxError) {
         self.url = url
-        guard let data = FileManager.default.contents(atPath: url.path) else {
+        guard FileManager.default.fileExists(atPath: url.path) else {
             state = NapboxState()
             return
         }
         let keep = "里面有端口登记，napboxd 不会覆盖它，请先把它移走或修好。"
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw NapboxError(.stateCorrupted, "状态文件 \(url.path) 读不了（\(error.localizedDescription)）。\(keep)")
+        }
         do {
             let version = try DiskJSON.decoder.decode(Header.self, from: data).version
             guard version == NapboxState.currentVersion else {

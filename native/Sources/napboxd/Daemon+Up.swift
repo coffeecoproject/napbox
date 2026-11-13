@@ -15,7 +15,7 @@ extension Daemon {
         let cwd = URL(fileURLWithPath: params.cwd)
         let location = try await Blocking.run { () throws(NapboxError) in try WorktreeLocation.locate(from: cwd) }
         try requireNotCallerDirectory(location.worktree.path)
-        let files = try ComposeFiles.resolve(explicit: params.files, cwd: cwd, worktree: location.worktree)
+        let files = try ComposeFiles.resolve(explicit: params.files, environment: params.environment, cwd: cwd, worktree: location.worktree)
         let project = try loadCompose(files, environment: params.environment, profiles: params.profiles)
         return try await startInWorktree(location, temporary: params.temp, project: project, egress: nil, rebuild: params.build)
     }
@@ -83,7 +83,7 @@ extension Daemon {
     func create(_ params: CreateParams) async throws(NapboxError) -> EnvironmentInfo {
         try CallerEnvironment.validate(name: params.name, owner: params.owner)
         let directory = try CallerEnvironment.directory(params.directory)
-        let files = try ComposeFiles.resolve(explicit: params.files, cwd: directory, worktree: directory)
+        let files = try ComposeFiles.resolve(explicit: params.files, environment: params.environment, cwd: directory, worktree: directory)
         let project = try loadCompose(files, environment: params.environment, profiles: params.profiles)
         let name = params.name, owner = EnvironmentRecord.Owner.caller(id: params.owner), egress = params.egress
         return try await serialized(name) { () throws(NapboxError) in
@@ -209,14 +209,16 @@ extension Daemon {
         }
     }
 
-    /// 起环境（up、create、唤醒、reset、按 restart 重启都走这里），起来后登记成运行中，再开始接它的服务退出通知
-    /// （先登记再接：每条通知都能对上 running 里的环境）。成功失败都留一条运行记录、发一条事件；失败时记下原因，
+    /// 起环境（up、create、唤醒、reset、按 restart 重启都走这里），起来后补上 develop.watch 没跑这段时间的变化，
+    /// 登记成运行中，再开始接它的服务退出通知（先登记再接：每条通知都能对上 running 里的环境）。成功失败都留一条运行记录、发一条事件；失败时记下原因，
     /// 冷却期内自动唤醒不再试。各入口共同的前提都在这里查：napboxd 不在退出、登记的端口都锁得上。
     /// 临时环境起不来就整个销毁：它没有休眠，不留一个停着的。
     /// - purpose：这次是为什么起。按 restart 重启时保留退避和重启次数，别的情况重新算
     /// - foreground：napbox run 在前台跑的那个服务
+    /// - progress：起到哪了（唤醒时连接等自己的服务就绪用）
     func launch(_ record: EnvironmentRecord, project: ComposeProject, skipping: Set<String>,
-                purpose: RunRecord.Purpose, foreground: ForegroundService? = nil) async throws(NapboxError) {
+                purpose: RunRecord.Purpose, foreground: ForegroundService? = nil,
+                progress: StartProgress = StartProgress()) async throws(NapboxError) {
         if shuttingDown { throw Self.exiting }
         let name = record.name
         let trace = RunTrace()
@@ -225,9 +227,10 @@ extension Daemon {
         let env: RunningEnvironment
         do {
             try lockPorts(record)
-            // 先开始监听：起环境期间进来的连接排队等着，环境就绪后再转发
+            // 先开始监听：起环境期间进来的连接排队等着，唤醒时等它连的服务就绪就转发（route）
             await syncListeners(name)
-            env = try await runtime.start(record, project: project, skipping: skipping, foreground: foreground, trace: trace)
+            env = try await runtime.start(record, project: project, skipping: skipping, foreground: foreground, trace: trace,
+                                          progress: progress)
         } catch {
             await startFailed(record, project: project, id: runId, purpose: purpose, startedAt: startedAt, error: error, trace: trace)
             if record.temporary != nil { await destroyTemporary(name, reason: "\(Self.description(purpose))失败") }
@@ -236,6 +239,8 @@ extension Daemon {
         await saveRun(record, project: project, id: runId, purpose: purpose, startedAt: startedAt, error: nil, trace: trace)
         sessions[name, default: EnvSession()].lastFailure = nil
         sessions[name, default: EnvSession()].restart.launched(at: Date(), restarting: purpose == .restart)
+        // 没跑的这段时间改的文件先同步进去，再登记成运行中：登记之后进来的连接直接转发
+        let followUp = await startWatching(record, env, project: project)
         running[name] = env
         activity.touch(name)
         // 先发 started 再接退出通知：调用方收到的顺序和发生的顺序一致
@@ -249,7 +254,7 @@ extension Daemon {
             Task { await self?.vmLost(name, env) }
         }
         await saveCompleted(name, env)
-        await startWatching(record, env, project: project)
+        await finishWatching(followUp, name, env)
     }
 
     /// 这次起环境失败了（可能还没走到 launch）：留运行记录、记下原因（冷却、status 用）、发事件。

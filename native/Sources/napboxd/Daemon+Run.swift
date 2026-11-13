@@ -14,7 +14,7 @@ extension Daemon {
         let cwd = URL(fileURLWithPath: params.cwd)
         let location = try await Blocking.run { () throws(NapboxError) in try WorktreeLocation.locate(from: cwd) }
         try requireNotCallerDirectory(location.worktree.path)
-        let files = try ComposeFiles.resolve(explicit: params.files, cwd: cwd, worktree: location.worktree)
+        let files = try ComposeFiles.resolve(explicit: params.files, environment: params.environment, cwd: cwd, worktree: location.worktree)
         let project = try loadCompose(
             files, environment: params.environment, profiles: params.profiles,
             run: ComposeRun(service: params.service, command: params.command, noDeps: params.noDeps)

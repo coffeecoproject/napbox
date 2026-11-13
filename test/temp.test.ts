@@ -268,7 +268,9 @@ describe("临时环境", { concurrency: false }, () => {
     assert.equal(down.code, 0, down.stdout.toString());
     const result = JSON.parse(down.stdout.toString());
     assert.equal(result.name, t1.name);
-    assert.deepEqual(result.releasedPorts, [portOf(t1)]);
+    // 没启用的 profile 里的 check 也留着一个端口（不转发、不列出），一起放掉
+    assert.equal(result.releasedPorts.length, 2);
+    assert.equal(result.releasedPorts.includes(portOf(t1)), true);
     assert.equal(result.keptDataAt, undefined);
     assert.equal(environmentDirectories(), 2);
     assert.equal(recycledEntries(), 0);
@@ -433,7 +435,7 @@ describe("napbox run", { concurrency: false }, () => {
     assert.equal(info?.name.startsWith(`${dev.name}/run-`), true);
     assert.equal(info?.state, "running");
     assert.equal(info?.egress, "none");
-    assert.deepEqual(info?.ports, [], "前台的服务不分配宿主机端口");
+    assert.deepEqual(info?.ports.map((p) => [p.service, p.containerPort]), [["check", 9000]], "前台的服务照常分配端口");
     running.child.kill("SIGKILL");
     await running.done;
     await waitUntil("run 的临时环境销毁", async () => (await runEnvironment()) === undefined, 30_000);

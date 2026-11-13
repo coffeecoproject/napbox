@@ -17,6 +17,9 @@ import (
 // populateVolume 和 containerd 的 fs.CopyDir）：镜像里有这个目录、卷是空的，就把目录里的东西连同属主、权限、
 // 扩展属性、时间复制进卷，卷的根目录也改成镜像里那个目录的属主和权限。镜像里没有这个目录，或者卷里已经有东西，就不动。
 //
+// 复制期间卷的根目录里有一个标记（populatingMark），复制完才删。虚拟机中途没了、复制出错时它留着：下次看到它，
+// 卷里的是上次复制到一半的内容，清掉重来，不当成“卷里已经有东西”。返回成功时标记已经删掉、内容已经落盘。
+//
 // 在这里做是因为这里同时看得到两边：服务的根文件系统和卷都挂在这个容器里（napboxd 里的 GuardContainer）。
 // 服务这时还没启动。
 //
@@ -42,14 +45,66 @@ func populateVolume(rootfs, target, volume string) error {
 	if err != nil {
 		return err
 	}
-	if len(existing) != 0 {
+	mark := filepath.Join(volume, populatingMark)
+	interrupted := false
+	for _, entry := range existing {
+		if entry.Name() == populatingMark {
+			interrupted = true
+		}
+	}
+	switch {
+	case interrupted:
+		for _, entry := range existing {
+			if entry.Name() == populatingMark {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(volume, entry.Name())); err != nil {
+				return err
+			}
+		}
+	case len(existing) != 0:
 		return nil
+	default:
+		// 标记先落盘，再开始复制：磁盘上只要有复制进来的内容，就一定有标记
+		if err := os.WriteFile(mark, nil, 0o600); err != nil {
+			return err
+		}
+		if err := syncFilesystem(volume); err != nil {
+			return err
+		}
 	}
 	copier := treeCopier{links: map[inode]string{}}
 	if err := copier.copyChildren(source, volume); err != nil {
 		return err
 	}
-	return copyAttributes(source, volume, &info)
+	if err := copyAttributes(source, volume, &info); err != nil {
+		return err
+	}
+	if err := os.Remove(mark); err != nil {
+		return err
+	}
+	// 删标记动了卷根目录的修改时间，再照镜像里的设一次
+	times := []unix.Timespec{info.Atim, info.Mtim}
+	if err := unix.UtimesNanoAt(unix.AT_FDCWD, volume, times, 0); err != nil {
+		return &fs.PathError{Op: "utimensat", Path: volume, Err: err}
+	}
+	return syncFilesystem(volume)
+}
+
+// 卷的根目录里表示“正在复制、还没复制完”的文件
+const populatingMark = ".napbox-populating"
+
+// 把 path 所在的文件系统刷到磁盘
+func syncFilesystem(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	if err := unix.Syncfs(int(directory.Fd())); err != nil {
+		return &fs.PathError{Op: "syncfs", Path: path, Err: err}
+	}
+	return nil
 }
 
 type inode struct{ device, number uint64 }

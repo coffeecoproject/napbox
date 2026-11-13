@@ -4,6 +4,7 @@ import Containerization
 import ContainerizationEXT4
 import CryptoKit
 import Foundation
+import NapboxCore
 import NapboxProtocol
 import SystemPackage
 
@@ -195,9 +196,15 @@ final class LogFile: Writer, @unchecked Sendable {
         try? handle?.close()
     }
 
-    /// 最后几行，报错时带上
+    /// 最后几行，报错时带上。日志可能很大，只读末尾这一段（LogReader）；不是 UTF-8 的字节照样显示出来
     func tail(_ lines: Int) -> String {
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return "" }
-        return text.split(separator: "\n", omittingEmptySubsequences: false).suffix(lines).joined(separator: "\n")
+        let end = LogReader.size(of: url)
+        var offset = LogReader.startOffset(of: url, lastLines: lines)
+        var data = Data()
+        while offset < end, let chunk = LogReader.read(url, from: offset, upTo: end), !chunk.isEmpty {
+            data.append(chunk)
+            offset += UInt64(chunk.count)
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 }

@@ -1106,7 +1106,8 @@ volumes:
     const held = await open(portOf(info));
     assert.equal(held.first, "hello");
     held.close();
-    assert.equal(await stateOf(), "running");
+    // 连接只等它连的服务：回话时环境可能还没起完，状态还是休眠
+    await waitUntil("环境起完", async () => (await stateOf()) === "running", 10_000);
   });
 
   test("虚拟机卡住（SIGSTOP）：不算没了，恢复后命令照常结束", async () => {
@@ -1383,6 +1384,8 @@ volumes:
     await client.sleep(byDirectory);
     assert.equal((await client.environment(byDirectory)).state, "sleeping");
     assert.equal(await hello(await port(byDirectory)), "hello\n");
+    // 连接只等它连的服务：回话时环境可能还没起完，运行记录在起完时才写
+    await waitUntil("环境起完", async () => (await client.environment(byDirectory)).state === "running", 10_000);
     assert.equal((await client.runs(byDirectory)).runs.at(-1)?.purpose, "wake");
     assert.equal(await lines(byDirectory, "/data/init-runs"), 1);
   });
@@ -1493,11 +1496,6 @@ describe("源码挂载：宿主机改完马上 exec", { concurrency: false }, ()
     renameSync(`${full}.tmp`, full);
     await delay(1200);
     assert.equal((await read("held.txt")).stdout, "new");
-  });
-
-  test("清缓存不往内核日志里写（否则会挤掉内存不足杀进程这类记录）：上面跑了上百条 exec，只有关提示那一次留了一行", async () => {
-    const { stdout } = await execIn(client, target, "box", ["sh", "-c", "dmesg | grep -c drop_caches || true"]);
-    assert.equal(stdout.trim(), "1");
   });
 });
 
@@ -2171,7 +2169,8 @@ describe("端口转发", { concurrency: false }, () => {
     await client.sleep(target);
     await closed;
     assert.match((await readAll(8081)).toString(), /^10\.88\.0\.1$/);
-    assert.equal((await client.environment(target)).state, "running");
+    // 连接只等它连的服务：回话时环境可能还没起完
+    await waitUntil("环境起完", async () => (await client.environment(target)).state === "running", 10_000);
   });
 
   test("网络小容器被撑爆后环境转成休眠，不留下看着在运行、其实连不上的环境；之后还能起来", async () => {

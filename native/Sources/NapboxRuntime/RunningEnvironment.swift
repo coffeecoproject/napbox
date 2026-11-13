@@ -174,13 +174,15 @@ public actor RunningEnvironment {
     ///   foregroundExit 交给调用方，不为 0 也不算起环境失败
     /// - egress：先加好出网规则再启动服务，服务起来的那一刻规则就在
     /// - trace：记下每个服务启动、就绪的时间
+    /// - progress：每个服务就绪时告诉它（跳过的一次性服务一开始就算就绪）
     func startAll(_ project: ComposeProject, skipping: Set<String>, foreground: String? = nil, egress: EgressMode,
-                  trace: RunTrace) async throws(NapboxError) {
+                  trace: RunTrace, progress: StartProgress) async throws(NapboxError) {
         watchVM()
         self.project = project
         for name in skipping {
             exits[name] = 0
             trace.skipped(name)
+            progress.serviceReady(name)
         }
         stopLayers = StartOrder.levels(project.services).reversed().map { $0.map(\.name) }
         // 新起和唤醒都是新开的虚拟机，第一个服务启动之前把时钟对准
@@ -193,24 +195,37 @@ public actor RunningEnvironment {
         watchGuard()
         try await applyEgress(egress)
         try startSourceEvents(project)
-        for s in StartOrder.order(project.services) where !skipping.contains(s.name) {
-            for d in s.dependsOn {
-                guard let dep = project.service(d.service) else { continue }
-                switch d.condition {
-                case .started: break
-                case .healthy: try await waitHealthy(dep)
-                case .completedSuccessfully: try await waitCompleted(dep)
+        // 每个服务一启动就开始判断它自己就绪没有，各查各的：先起好的（比如数据库）马上算就绪，
+        // 唤醒时连它的连接不用等后面启动慢的服务
+        var checks: [String: Task<Result<Void, NapboxError>, Never>] = [:]
+        do throws(NapboxError) {
+            for s in StartOrder.order(project.services) where !skipping.contains(s.name) {
+                for d in s.dependsOn {
+                    guard let dep = project.service(d.service) else { continue }
+                    switch d.condition {
+                    case .started: break
+                    case .healthy:
+                        // 有 healthcheck 的，它的就绪判断就是 healthcheck：等那一份，不另外再查一遍
+                        if dep.healthcheck != nil, let check = checks[dep.name] { try await check.value.get() } else { try await waitHealthy(dep) }
+                    case .completedSuccessfully: try await waitCompleted(dep)
+                    }
+                }
+                try await populateVolumes(s)
+                try await startContainer(s.name)
+                trace.started(s.name)
+                started.insert(s.name)
+                gracePeriods[s.name] = s.stopGracePeriodSeconds
+                watch(s.name)
+                if s.name != foreground {
+                    checks[s.name] = Task { await self.checkReady(s, trace: trace, progress: progress) }
                 }
             }
-            try await populateVolumes(s)
-            try await startContainer(s.name)
-            trace.started(s.name)
-            started.insert(s.name)
-            gracePeriods[s.name] = s.stopGracePeriodSeconds
-            watch(s.name)
-        }
-        for s in project.services where !skipping.contains(s.name) && s.name != foreground {
-            trace.ready(s.name, try await waitReady(s))
+            for s in project.services {
+                try await checks[s.name]?.value.get()
+            }
+        } catch {
+            for check in checks.values { check.cancel() }
+            throw error
         }
         // 服务启动的那一刻宿主机正好在换文件的话，服务挂上的可能是被换掉的那个：报就绪之前确认一遍
         try await catchUpBoundFiles()
@@ -727,6 +742,16 @@ public actor RunningEnvironment {
             try await pause(0.5)
             if let code = exits[s.name], code != 0 { throw failed(s.name, code) }
             return .process
+        }
+    }
+
+    private func checkReady(_ s: Service, trace: RunTrace, progress: StartProgress) async -> Result<Void, NapboxError> {
+        do throws(NapboxError) {
+            trace.ready(s.name, try await waitReady(s))
+            progress.serviceReady(s.name)
+            return .success(())
+        } catch {
+            return .failure(error)
         }
     }
 

@@ -79,7 +79,7 @@ actor WatchSession {
 
 extension Daemon {
     /// 补同步、一批同步之后还要做的事。重建、重启排在同步后面，sync+exec 最后在届时的环境里跑（compose 的顺序）。
-    private struct WatchFollowUp: Sendable {
+    struct WatchFollowUp: Sendable {
         var rebuild = false
         var restart = false
         var execs: [(service: String, command: [String])] = []
@@ -93,13 +93,16 @@ extension Daemon {
         }
     }
 
-    /// 环境起好时调用：开始听变化，补上没跑的这段时间的变化。同步失败不算起环境失败，原因放在 status 的 watchError。
-    func startWatching(_ record: EnvironmentRecord, _ env: RunningEnvironment, project: ComposeProject) async {
+    /// 服务都就绪后、环境登记成运行中之前调用：开始听变化，补上没跑的这段时间的变化。登记之后进来的连接直接转发，
+    /// 所以先同步好再登记，它们不会连上还是旧文件的服务。同步失败不算起环境失败，原因放在 status 的 watchError。
+    /// 返回同步之后还要做的事，登记之后交给 finishWatching。
+    func startWatching(_ record: EnvironmentRecord, _ env: RunningEnvironment, project: ComposeProject) async -> WatchFollowUp {
         let name = record.name
+        var followUp = WatchFollowUp()
         guard project.services.contains(where: { !$0.watch.isEmpty }) else {
             sessions[name]?.watchSyncError = nil
             sessions[name]?.watchBuildError = nil
-            return
+            return followUp
         }
         let matcher = WatchMatcher(project: project, canonical: realDirectory) { try? String(contentsOfFile: $0, encoding: .utf8) }
         let session = WatchSession(name: name, environment: env, matcher: matcher) { [weak self] paths in
@@ -109,11 +112,10 @@ extension Daemon {
             try await session.start()
         } catch {
             watchFailed(name, error.message)
-            return
+            return followUp
         }
         watchSessions[name] = session
 
-        var followUp = WatchFollowUp()
         var errors: [String] = []
         for service in matcher.services where await env.isServiceRunning(service) {
             do throws(NapboxError) {
@@ -126,6 +128,11 @@ extension Daemon {
             }
         }
         watchResult(name, errors)
+        return followUp
+    }
+
+    /// 环境登记成运行中之后：补同步带出来的重建、重启、sync+exec
+    func finishWatching(_ followUp: WatchFollowUp, _ name: String, _ env: RunningEnvironment) async {
         if followUp.rebuild || followUp.restart {
             // 服务已经按旧文件起来了，要重启才生效。现在在这个环境的队列里，重建、重启要排在后面
             Task { [self, followUp] in

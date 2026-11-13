@@ -17,7 +17,8 @@ public actor Runtime {
     /// 网络小容器的程序（Linux 版 napbox-guard）。直接写进一个根文件系统，不用镜像
     let guardBinary: URL
     let builder: ImageBuilder
-    private var prepared: (store: ImageStore, vmm: VZVirtualMachineManager)?
+    /// 正在做或已经做完的那次准备。同时进来的都等它：各做各的会互相删掉对方刚建的 init.block
+    private var preparing: Task<(store: ImageStore, vmm: VZVirtualMachineManager), Error>?
 
     /// vminit 的版本和 Containerization 一致
     static let vminitReference = "ghcr.io/apple/containerization/vminit:0.53.0"
@@ -39,7 +40,18 @@ public actor Runtime {
 
     /// 内核、runc、Rosetta、镜像库、vminit。第一次起环境时准备，之后复用。
     func prepare() async throws(NapboxError) -> (store: ImageStore, vmm: VZVirtualMachineManager) {
-        if let prepared { return prepared }
+        let task = preparing ?? Task { try await self.prepareOnce() }
+        preparing = task
+        do {
+            return try await task.value
+        } catch {
+            // 没准备成的不留着：下次再试（比如 setup 之后）
+            if preparing == task { preparing = nil }
+            throw error as? NapboxError ?? NapboxError(.runtimeUnavailable, "准备运行环境失败：\(error)")
+        }
+    }
+
+    private func prepareOnce() async throws(NapboxError) -> (store: ImageStore, vmm: VZVirtualMachineManager) {
         guard FileManager.default.fileExists(atPath: guardBinary.path) else {
             throw NapboxError(.runtimeUnavailable, "没有网络小容器的程序 \(guardBinary.path)：它和 napboxd 在同一目录，由 scripts/build-native.sh 一起编译。")
         }
@@ -69,7 +81,6 @@ public actor Runtime {
             let vmm = VZVirtualMachineManager(kernel: Kernel(path: kernel, platform: .linuxArm), initialFilesystem: initfs,
                                               rosetta: true,
                                               group: MultiThreadedEventLoopGroup.singleton)
-            prepared = (store, vmm)
             return (store, vmm)
         } catch {
             throw NapboxError(.runtimeUnavailable, "准备运行环境失败：\(error)")
@@ -155,8 +166,10 @@ public actor Runtime {
     /// - skipping：唤醒时传已经成功跑完的一次性服务；显式 up 传空，和 Docker 一样一次性服务会再跑一次
     /// - trace：记下每个服务用的镜像、启动和就绪的时间，失败时也留着走到的部分（运行记录用）
     /// - foreground：napbox run 在前台跑的那个服务，接上它的标准输入和输出，不等它就绪
+    /// - progress：虚拟机建好了、哪个服务就绪了随时告诉它（唤醒时连接等自己的服务就绪用）
     public func start(_ record: EnvironmentRecord, project: ComposeProject, skipping: Set<String>,
-                      foreground: ForegroundService? = nil, trace: RunTrace) async throws(NapboxError) -> RunningEnvironment {
+                      foreground: ForegroundService? = nil, trace: RunTrace,
+                      progress: StartProgress) async throws(NapboxError) -> RunningEnvironment {
         let (store, vmm) = try await prepare()
         guard let ip = record.ip else { throw NapboxError(.internalError, "环境 \(record.name) 没有分配 IP") }
         let layout = try EnvironmentLayout(directory: storage.environmentDirectory(record))
@@ -186,8 +199,10 @@ public actor Runtime {
             images: Dictionary(uniqueKeysWithValues: containers.map { ($0.name, ServiceImage(user: $0.imageConfig.user ?? "", created: $0.imageCreated)) }),
             layout: layout, addresses: addresses
         )
+        progress.created(env)
         do {
-            try await env.startAll(project, skipping: skipping, foreground: foreground?.service, egress: record.egress, trace: trace)
+            try await env.startAll(project, skipping: skipping, foreground: foreground?.service, egress: record.egress,
+                                   trace: trace, progress: progress)
         } catch {
             await env.stop()
             throw error
@@ -220,6 +235,9 @@ public actor Runtime {
                 c.volumes = volumes
                 // 容器都由垫在 runc 前面那一层来启动，服务的容器在这时接上自己的网络
                 c.ociRuntimePath = RuntimeContainer.guestProgram
+                // 服务都带框架默认的系统调用白名单（和 Docker 默认用的是同一份）。它不让建 vsock：服务够不到网络小容器
+                // 和 napboxd 的 vsock 端口，这条路不经过出网规则
+                c.seccompProfile = .default
             }
             // 只为了让虚拟机里有那块盘，不启动
             try await pod.addContainer(RuntimeContainer.name, rootfs: runtimeDisk) { c in
@@ -227,6 +245,8 @@ public actor Runtime {
             }
             try await pod.addContainer(GuardContainer.name, rootfs: guardRootfs) { c in
                 c.process.arguments = [GuardContainer.program]
+                // 它自己要在 vsock 上听 napboxd，重新挂文件时还要进服务的挂载命名空间：不带白名单
+                c.seccompProfile = .unconfined
                 let sources = GuardContainer.sources(project)
                 c.mounts = LinuxContainer.defaultMounts() + sources.directories.enumerated().map {
                     .share(source: $1, destination: "/napbox-src/\($0)", options: [])

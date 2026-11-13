@@ -4,11 +4,15 @@
 // - environment、depends_on、build.args、networks 的列表写法先转成映射再合并
 // - ports、expose、env_file、tmpfs、profiles、secrets 追加并去重
 // - volumes 按容器里的路径合并，同一路径以后面的为准
+// - 后面的文件里只写了键、没写值（比如下面的条目都注释掉了）：当作没写，沿用前面的。
+//   command、entrypoint 是整个替换的，空值就是清掉（2026-11-13 对着 docker compose config 5.1.4 核对过）
 enum ComposeMerge {
     static func merge(_ base: YAMLTree, _ override: YAMLTree) -> YAMLTree {
+        if override == .null { return base }
         guard let b = base.entries, let o = override.entries else { return override }
         return .mapping(mergeEntries(b, o) { key, x, y in
-            switch key {
+            if y == .null { return x }
+            return switch key {
             case "services": mergeMapping(x, y) { _, s1, s2 in mergeService(s1, s2) }
             case "volumes", "networks": mergeMapping(x, y) { _, _, v in v }
             default: deepMerge(x, y)
@@ -17,9 +21,11 @@ enum ComposeMerge {
     }
 
     static func mergeService(_ base: YAMLTree, _ override: YAMLTree) -> YAMLTree {
+        if override == .null { return base }
         guard let b = base.entries, let o = override.entries else { return override }
         return .mapping(mergeEntries(b, o) { key, x, y in
-            switch key {
+            if y == .null, key != "command", key != "entrypoint" { return x }
+            return switch key {
             case "environment": deepMerge(asMapping(x, listStyle: .keyValue), asMapping(y, listStyle: .keyValue))
             case "depends_on": mergeMapping(asMapping(x, listStyle: .dependency), asMapping(y, listStyle: .dependency)) { _, _, v in v }
             case "networks": deepMerge(asMapping(x, listStyle: .names), asMapping(y, listStyle: .names))

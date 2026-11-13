@@ -35,12 +35,17 @@ func serveVsock(port uint32, handle func(*os.File)) error {
 		return fmt.Errorf("监听不了 vsock：%w", err)
 	}
 	for {
-		connection, _, err := unix.Accept4(listener, unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK)
+		connection, peer, err := unix.Accept4(listener, unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK)
 		if err == unix.EINTR || err == unix.ECONNABORTED {
 			continue
 		}
 		if err != nil {
 			return fmt.Errorf("接受 vsock 连接失败：%w", err)
+		}
+		// 只听宿主机（napboxd）的：虚拟机里面连过来的不是它，不替别人去连服务、发通知
+		if from, ok := peer.(*unix.SockaddrVM); !ok || from.CID != unix.VMADDR_CID_HOST {
+			unix.Close(connection)
+			continue
 		}
 		// 非阻塞的 fd 交给 os.File 后由 Go 的 netpoller 等待，不占线程
 		go func() {

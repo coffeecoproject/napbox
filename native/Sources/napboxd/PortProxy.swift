@@ -1,5 +1,5 @@
 // 宿主机端口代理：环境从登记到回收，napboxd 一直在它的端口上接受连接。
-// 环境在运行就直接转发（RelayMux）；在休眠就先暂存连接（不读数据，数据留在 socket 里），唤醒、就绪后再转发。
+// 环境在运行就直接转发（RelayMux）；在休眠就先暂存连接（不读数据，数据留在 socket 里），唤醒，它连的服务就绪后再转发。
 import Foundation
 import NIOConcurrencyHelpers
 import NIOCore
