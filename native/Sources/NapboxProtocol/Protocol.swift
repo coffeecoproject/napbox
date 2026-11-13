@@ -580,6 +580,16 @@ public struct ServiceRun: Codable, Sendable {
         case process
     }
 
+    /// 根文件系统是怎么来的
+    public enum Rootfs: String, Codable, Sendable {
+        /// 从镜像解包
+        case unpacked
+        /// 这次起环境已经给同一个镜像的别的服务解包过，克隆那一份
+        case cloned
+        /// 镜像和服务的定义都没变，沿用上次的，容器里写的东西还在
+        case reused
+    }
+
     public var service: String
     /// 完整的镜像名，比如 docker.io/library/postgres:17-alpine
     public var image: String
@@ -593,9 +603,11 @@ public struct ServiceRun: Codable, Sendable {
     public var readyAt: Date?
     /// 就绪了才有
     public var readiness: Readiness?
+    /// 根文件系统准备好了才有
+    public var rootfs: Rootfs?
 
     public init(service: String, image: String, digest: String, platformDigest: String, skipped: Bool = false,
-                startedAt: Date? = nil, readyAt: Date? = nil, readiness: Readiness? = nil) {
+                startedAt: Date? = nil, readyAt: Date? = nil, readiness: Readiness? = nil, rootfs: Rootfs? = nil) {
         self.service = service
         self.image = image
         self.digest = digest
@@ -604,6 +616,7 @@ public struct ServiceRun: Codable, Sendable {
         self.startedAt = startedAt
         self.readyAt = readyAt
         self.readiness = readiness
+        self.rootfs = rootfs
     }
 }
 

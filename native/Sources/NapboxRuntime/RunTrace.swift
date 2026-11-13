@@ -16,6 +16,7 @@ public final class RunTrace: Sendable {
         entries.withLock { $0[service] = ServiceRun(service: service, image: reference, digest: digest, platformDigest: platformDigest) }
     }
 
+    func rootfs(_ service: String, _ source: ServiceRun.Rootfs) { entries.withLock { $0[service]?.rootfs = source } }
     func skipped(_ service: String) { entries.withLock { $0[service]?.skipped = true } }
     func started(_ service: String) { entries.withLock { $0[service]?.startedAt = Date() } }
 

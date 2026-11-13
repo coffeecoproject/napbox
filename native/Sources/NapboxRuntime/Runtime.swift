@@ -178,13 +178,15 @@ public actor Runtime {
 
         // 每个 ContainerPlan 打开一个日志文件：中途失败时把已经打开的关上（napboxd 常驻，唤醒反复失败时句柄会越积越多）
         var containers: [ContainerPlan] = []
+        var freshRootfs: [String: URL] = [:]
         let pod: LinuxPod
         do throws(NapboxError) {
             for s in project.services {
                 let image = try await Images.forStart(s, project: project, environment: record.id, store: store)
                 trace.image(s.name, reference: image.reference, digest: image.digest, platformDigest: try await Images.platformDigest(image))
                 containers.append(try await ContainerPlan(
-                    service: s, image: image, layout: layout, portVariables: portVariables, foreground: s.name == foreground?.service ? foreground : nil
+                    service: s, image: image, layout: layout, portVariables: portVariables, freshRootfs: &freshRootfs, trace: trace,
+                    foreground: s.name == foreground?.service ? foreground : nil
                 ))
             }
             pod = try await createPod(record, project: project, ip: ip, addresses: addresses, layout: layout, containers: containers, vmm: vmm)

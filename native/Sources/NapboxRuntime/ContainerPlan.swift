@@ -41,8 +41,10 @@ struct ContainerPlan: Sendable {
     let foreground: ForegroundService?
 
     /// - portVariables：这个环境的端口变量，换掉 environment 里引用的（PortReferences）
+    /// - freshRootfs：这次起环境新解包出来的根文件系统，同一个镜像的服务从它克隆（EnvironmentLayout.rootfs）
+    /// - trace：记下根文件系统是怎么来的
     init(service s: Service, image: Containerization.Image, layout: EnvironmentLayout, portVariables: [String: String],
-         foreground: ForegroundService? = nil) async throws(NapboxError) {
+         freshRootfs: inout [String: URL], trace: RunTrace, foreground: ForegroundService? = nil) async throws(NapboxError) {
         name = s.name
         self.foreground = foreground
         // up 在登记之前都查过一遍（Runtime.checkHostMounts、prepareImages）；唤醒、reset、按 restart 重启不经过那里，
@@ -53,7 +55,9 @@ struct ContainerPlan: Sendable {
         imageCreated = settings.created
         arguments = settings.arguments
         stopSignal = settings.stopSignal
-        rootfs = try await layout.rootfs(s.name, image: image, definition: try Self.definition(s))
+        let prepared = try await layout.rootfs(s.name, image: image, definition: try Self.definition(s), fresh: &freshRootfs)
+        rootfs = prepared.mount
+        trace.rootfs(s.name, prepared.source)
 
         // 按第一个 = 拆；没有名字的条目（空的、= 开头的）不是环境变量，不要
         var env: [(String, String)] = (imageConfig.env ?? []).compactMap { kv in

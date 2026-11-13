@@ -3,11 +3,13 @@ import Foundation
 import NapboxProtocol
 
 public struct NapboxState: Codable, Equatable, Sendable {
-    /// 状态文件格式的版本。格式变了（登记或 compose 模型加了、改了字段）就加 1：napboxd 只认当前版本，
-    /// 对不上时报错说明，不去猜旧格式
+    /// 状态文件格式的版本。格式变了（登记或 compose 模型加了必须有的字段、改了字段）就加 1：napboxd 只认当前版本，
+    /// 对不上时报错说明，不去猜旧格式。加可以不写的字段不加 1：旧文件里没有，读出来就是没有
     static let currentVersion = 1
     public var version = currentVersion
     public var environments: [EnvironmentRecord] = []
+    /// 上次新分配出去的宿主机端口，下次从它后面接着找（PortAllocator.assign、recordAllocation）。还没分配过时没有
+    public var lastAssignedPort: Int?
 
     public init() {}
 

@@ -1,4 +1,4 @@
-// 端口分配和锁定：从 40000–49999 分配，同一个环境每次一样；
+// 端口分配和锁定：从 40000–49999 接着上次往后分配，同一个环境每次一样；
 // 分配后 napboxd 一直监听这些端口（休眠时也不放开），别的程序拿不到。
 import Darwin
 import Foundation
@@ -139,16 +139,33 @@ public final class PortLocks {
     }
 }
 
+/// 一次分配的结果。lastNew 是这次新分到的端口里最后分的那个（按查找顺序），由调用方写回登记表的
+/// `lastAssignedPort`，下次从它后面接着找；没有新分的端口时是 nil，登记表里的不动。
+public struct PortAllocation: Equatable, Sendable {
+    public var ports: [PortAssignment]
+    public var lastNew: Int?
+}
+
+extension NapboxState {
+    /// 把一次分配写回登记表的接续位置：有新分的端口，下次从最后那个后面接着找；没有就不动
+    public mutating func recordAllocation(_ allocation: PortAllocation) {
+        if let last = allocation.lastNew { lastAssignedPort = last }
+    }
+}
+
 public enum PortAllocator {
     public static let range = 40000...49999
 
-    /// 给一个环境分配端口：已经分配过的沿用（并确保锁着），新的从范围里找第一个没登记、也绑得上的端口，
-    /// 不再需要的释放。哪些端口已被占用由登记表决定：其他环境登记的端口即使暂时没锁上，也不能分给这个环境。
+    /// 给一个环境分配端口：已经分配过的沿用（并确保锁着），新的从登记表里上次分到的端口后面接着找，到头了从范围开头
+    /// 再找，取第一个没登记、也绑得上的端口；不再需要的释放。哪些端口已被占用由登记表决定：其他环境登记的端口即使
+    /// 暂时没锁上，也不能分给这个环境。
+    /// 接着找而不是每次从头找：回收的环境放开的端口要轮完整个范围才会再分出去，项目和 agent 手里过期的地址
+    /// （启动脚本写出的文件、记下的端口）连上去是没人监听、直接报错，不会悄悄连到别的 worktree 的服务。
     /// 出错时这次新锁的端口都放开。返回新的分配结果，由调用方写回登记表。
     public static func assign(
         _ requests: [PortRequest], environment: String, state: NapboxState,
         locks: PortLocks, range: ClosedRange<Int> = range
-    ) throws(NapboxError) -> [PortAssignment] {
+    ) throws(NapboxError) -> PortAllocation {
         let current = state.environment(environment)?.ports ?? []
         let takenByOthers = Set(state.environments.filter { $0.name != environment }.flatMap { $0.ports.map(\.hostPort) })
         let wanted = Set(requests)
@@ -166,13 +183,15 @@ public enum PortAllocator {
             result.append(a)
         }
         var used = takenByOthers.union(current.map(\.hostPort))
-        var candidate = range.lowerBound
+        // 从上次分到的端口后面开始，绕一圈回到它为止
+        let start = state.lastAssignedPort.flatMap { range.contains($0) && $0 < range.upperBound ? $0 + 1 : nil } ?? range.lowerBound
+        var candidates = Array(start...range.upperBound) + Array(range.lowerBound..<start)
+        candidates.reverse()
+        var lastNew: Int?
         var handled = Set(result.map(\.request))
         for r in requests where handled.insert(r).inserted {
             var assigned: Int?
-            while candidate <= range.upperBound {
-                let port = candidate
-                candidate += 1
+            while let port = candidates.popLast() {
                 if used.contains(port) { continue }
                 if locks.lock(port) {
                     assigned = port
@@ -185,9 +204,10 @@ public enum PortAllocator {
             }
             newlyLocked.append(port)
             used.insert(port)
+            lastNew = port
             result.append(PortAssignment(service: r.service, containerPort: r.containerPort, hostPort: port))
         }
         for a in current where !wanted.contains(a.request) { locks.release(a.hostPort) }
-        return result.sorted { ($0.service, $0.containerPort) < ($1.service, $1.containerPort) }
+        return PortAllocation(ports: result.sorted { ($0.service, $0.containerPort) < ($1.service, $1.containerPort) }, lastNew: lastNew)
     }
 }

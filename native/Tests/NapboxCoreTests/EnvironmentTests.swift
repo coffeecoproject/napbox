@@ -299,7 +299,7 @@ import NapboxProtocol
         let locks = PortLocks()
         // 别的环境登记了 +1（napboxd 重启后没锁上也算它的）
         var registry = state(["other/main": [PortAssignment(service: "db", containerPort: 5432, hostPort: range.lowerBound + 1)]])
-        let first = try PortAllocator.assign(requests([("db", 5432), ("api", 3100)]), environment: "p/main", state: registry, locks: locks, range: range)
+        let first = try PortAllocator.assign(requests([("db", 5432), ("api", 3100)]), environment: "p/main", state: registry, locks: locks, range: range).ports
         // 第一个被别的程序占着、第二个是别的环境登记的，都跳过
         #expect(first == [
             PortAssignment(service: "api", containerPort: 3100, hostPort: range.lowerBound + 3),
@@ -316,12 +316,12 @@ import NapboxProtocol
 
         // 写回登记表后，第三个环境不会拿到这两个端口
         registry.environments.append(EnvironmentRecord(name: "p/main", project: nil, mainRepository: nil, worktree: "/p", owner: .worktree, ports: first))
-        let third = try PortAllocator.assign(requests([("db", 5432)]), environment: "q/main", state: registry, locks: locks, range: range)
+        let third = try PortAllocator.assign(requests([("db", 5432)]), environment: "q/main", state: registry, locks: locks, range: range).ports
         #expect(third == [PortAssignment(service: "db", containerPort: 5432, hostPort: range.lowerBound + 4)])
         registry.environments.append(EnvironmentRecord(name: "q/main", project: nil, mainRepository: nil, worktree: "/q", owner: .worktree, ports: third))
 
         // 再次 up：端口不变；去掉 api、加上 cache：api 的端口释放，cache 拿新端口
-        let second = try PortAllocator.assign(requests([("db", 5432), ("cache", 6379)]), environment: "p/main", state: registry, locks: locks, range: range)
+        let second = try PortAllocator.assign(requests([("db", 5432), ("cache", 6379)]), environment: "p/main", state: registry, locks: locks, range: range).ports
         #expect(second.first { $0.service == "db" }?.hostPort == range.lowerBound + 2)
         #expect(second.first { $0.service == "cache" }?.hostPort == range.lowerBound + 5)
         #expect(!locks.lockedPorts.contains(range.lowerBound + 3))
@@ -338,7 +338,7 @@ import NapboxProtocol
         var registry = NapboxState()
         func up(_ profiles: [String]) throws -> EnvironmentRecord {
             let project = try load(files, profiles: profiles)
-            let ports = try PortAllocator.assign(project.portRequests, environment: "p/main", state: registry, locks: locks, range: range)
+            let ports = try PortAllocator.assign(project.portRequests, environment: "p/main", state: registry, locks: locks, range: range).ports
             let record = EnvironmentRecord(name: "p/main", project: nil, mainRepository: nil, worktree: "/p", owner: .worktree,
                                            ports: ports, definition: project)
             registry.environments = [record]
@@ -354,10 +354,39 @@ import NapboxProtocol
         #expect(locks.lockedPorts == withoutAPI.ports.map(\.hostPort).sorted())
     }
 
+    /// 新端口从上次分到的后面接着分：回收的环境放开的端口不马上分给下一个，过期的地址连上去是没人监听；
+    /// 到范围末尾从头再找，跳过还登记着的
+    @Test func releasedPortsAreNotReusedRightAway() throws {
+        // 单独一段：和别的用例共用 range 开头时，全部一起跑偶尔锁不上，原因未知
+        // （按顺序重放这几个用例对这些端口的操作 200 轮，没有复现）
+        let range = 38420...38422
+        let locks = PortLocks()
+        var registry = NapboxState()
+        func up(_ name: String) throws -> PortAllocation {
+            let allocation = try PortAllocator.assign(requests([("api", 3100)]), environment: name, state: registry, locks: locks, range: range)
+            registry.environments.removeAll { $0.name == name }
+            registry.environments.append(EnvironmentRecord(name: name, project: nil, mainRepository: nil, worktree: "/\(name)", owner: .worktree, ports: allocation.ports))
+            registry.recordAllocation(allocation)
+            return allocation
+        }
+        func down(_ name: String) {
+            for p in registry.environment(name)?.ports ?? [] { locks.release(p.hostPort) }
+            registry.environments.removeAll { $0.name == name }
+        }
+        #expect(try up("a/main").ports.map(\.hostPort) == [range.lowerBound])
+        down("a/main")
+        #expect(try up("b/main").ports.map(\.hostPort) == [range.lowerBound + 1], "a 放开的端口不马上给 b")
+        let again = try up("b/main")
+        #expect(again.ports.map(\.hostPort) == [range.lowerBound + 1] && again.lastNew == nil, "再次 up 沿用，不动接续位置")
+        #expect(registry.lastAssignedPort == range.lowerBound + 1)
+        #expect(try up("c/main").ports.map(\.hostPort) == [range.lowerBound + 2])
+        #expect(try up("d/main").ports.map(\.hostPort) == [range.lowerBound], "到末尾从头找，跳过 b、c 还登记着的")
+    }
+
     @Test func napboxdRestartRelocks() throws {
         let current = [PortAssignment(service: "db", containerPort: 5432, hostPort: range.lowerBound + 6)]
         let locks = PortLocks() // 模拟 napboxd 重启：登记还在，锁没了
-        let result = try PortAllocator.assign(requests([("db", 5432)]), environment: "p/main", state: state(["p/main": current]), locks: locks, range: range)
+        let result = try PortAllocator.assign(requests([("db", 5432)]), environment: "p/main", state: state(["p/main": current]), locks: locks, range: range).ports
         #expect(result == current)
         #expect(locks.lockedPorts == [range.lowerBound + 6])
     }

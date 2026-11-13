@@ -198,7 +198,8 @@ extension Daemon {
         let ports = try PortAllocator.assign(requests, environment: name, state: store.state, locks: locks)
         return try store.update { (state: inout NapboxState) throws(NapboxError) -> EnvironmentRecord in
             var r = state.environment(name) ?? newRecord(state)
-            r.ports = ports
+            r.ports = ports.ports
+            state.recordAllocation(ports)
             r.ip = ip
             r.definition = project
             r.completedServices = []

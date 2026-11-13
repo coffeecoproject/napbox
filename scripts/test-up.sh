@@ -3,7 +3,8 @@
 #   db    postgres，带 healthcheck 和命名卷
 #   seed  一次性服务，等 db 健康后用服务名 db 连上去写一行（测 hosts、依赖顺序）
 #   web   有端口、没有 healthcheck 的服务，等 seed 成功跑完才启动；启动时报告根文件系统是新的还是沿用的
-#   probe 连上它的端口就得到一个 shell，在环境里执行命令（测出网规则）
+#   probe 连上它的端口就得到一个 shell，在环境里执行命令（测出网规则）；和 web 同一个镜像，根文件系统由同一次解包克隆
+#         出来，启动时在自己的根文件系统里留个记号（web 重建时不能从它克隆）
 # 在临时 git 仓库和临时 napbox 目录（NAPBOX_SUPPORT_DIR）里跑，不碰别的项目。镜像库和内核链接到
 # ~/Library/Application Support/napbox 里已有的，不重新下载。要起虚拟机，所以不放进 test-native.sh；
 # 改了 NapboxRuntime 或端口代理后手动跑。用法：scripts/test-up.sh
@@ -102,7 +103,7 @@ services:
   web:
     image: alpine:3.20
     environment: {MSG: $1}
-    command: ["sh", "-c", "if [ -f /marker ]; then s=reused; else s=fresh; fi; touch /marker; while true; do echo \"\$\$s \$\$MSG\" | nc -l -p 8080; done"]
+    command: ["sh", "-c", "if [ -f /marker ] || [ -f /probe-was-here ]; then s=reused; else s=fresh; fi; touch /marker; while true; do echo \"\$\$s \$\$MSG\" | nc -l -p 8080; done"]
     ports: ["8080"]
     # sh 作为容器里的主进程不处理 SIGTERM（Docker 下也一样），停的时候等满 stop_grace_period 再强制结束
     stop_grace_period: 1s
@@ -110,7 +111,7 @@ services:
   probe:
     image: alpine:3.20
     # 启动时先输出 300 行，测 logs 默认只给最后 200 行
-    command: ["sh", "-c", "seq 1 300; while true; do nc -l -p 9000 -e sh; done"]
+    command: ["sh", "-c", "touch /probe-was-here; seq 1 300; while true; do nc -l -p 9000 -e sh; done"]
     # 引用这个环境自己的端口变量：起服务时换成宿主机上连它的地址
     environment: {SELF: "http://\${NAPBOX_PROBE_9000}"}
     ports: ["9000"]
@@ -134,6 +135,14 @@ db=$(port_of db); web=$(port_of web); probe=$(port_of probe)
 check "分到三个端口" test -n "$db" -a -n "$web" -a -n "$probe"
 check "web 经代理回话，根文件系统是新的" test "$(web_says "$web")" = "fresh v1"
 check "seed 等 db 健康后用服务名连上并写入" test "$(sql "$db" 'select count(*) from seeded')" = "1"
+check "同一个镜像的服务各有各的根文件系统：web 写的 probe 看不到" test "$(in_env 'test -e /marker && echo 有 || echo 没有')" = "没有"
+# 最近一次运行记录里，给出的服务的根文件系统是怎么来的，按服务名排
+rootfs_of() {
+    rpc runs "$(jq -nc --arg cwd "$(cd "$repo" && pwd -P)" '{target: {cwd: $cwd}}')" |
+        jq -c --args '[.result.runs[-1].services[] | select(.service | IN($ARGS.positional[])) | .rootfs]' "$@"
+}
+check "同一个镜像只解包一次：db、seed 一个解包一个克隆" test "$(rootfs_of db seed | jq -c sort)" = '["cloned","unpacked"]'
+check "同一个镜像只解包一次：web、probe 一个解包一个克隆" test "$(rootfs_of web probe | jq -c sort)" = '["cloned","unpacked"]'
 check "写了 .napbox/ports.json" test -f "$repo/.napbox/ports.json"
 check "environment 里引用的端口变量换成了这个环境的地址" test "$(in_env 'echo $SELF')" = "http://127.0.0.1:$probe"
 check ".git/info/exclude 里有 .napbox/" grep -qx ".napbox/" "$repo/.git/info/exclude"
@@ -170,7 +179,8 @@ check "唤醒后再 up：在运行、定义没变，直接返回" test "$(jq -c 
 echo "改了 compose 再 up"
 write_compose v2
 up="$(cd "$repo" && "$napbox" up)" || echo "$up"
-check "web 的定义变了，根文件系统重建" test "$(web_says "$web")" = "fresh v2"
+check "web 的定义变了，根文件系统重建（重新解包，不从 probe 用过的克隆）" test "$(web_says "$web")" = "fresh v2"
+check "运行记录里 web 是解包的，没变的 db、probe、seed 沿用" test "$(rootfs_of db probe seed web)" = '["reused","reused","reused","unpacked"]'
 check "端口不变" test "$(port_of web)" = "$web"
 check "显式 up 和 Docker 一样会再跑一次 seed" test "$(sql "$db" 'select count(*) from seeded')" = "2"
 
@@ -497,6 +507,8 @@ sub=$subscriber
 created="$(rpc create "$(create_params codeos/goal-1-work "$copy" '{"egress":"none"}')")"
 check "create 起来了，持有方和出网模式对" test "$(jq -r '.result | "\(.name) \(.owner) \(.state) \(.egress)"' <<<"$created")" = "codeos/goal-1-work codeos running none"
 workport=$(jq -r '.result.ports[] | select(.service == "web") | .hostPort' <<<"$created")
+# 原来每次从范围开头找，down 掉的 demo/main 放开的端口会马上分给这个新环境
+check "回收的环境放开的端口不马上分出去" sh -c 'case " $2 " in *" $1 "*) exit 1;; esac; test -n "$1"' _ "$workport" "$db $web $probe"
 check "返回端口和环境变量" test "$(jq -r '.result.variables.NAPBOX_WEB_8080' <<<"$created")" = "127.0.0.1:$workport"
 check "调用方给的变量进了 compose" test "$(web_says "$workport")" = hello
 check "代码副本里不写 .napbox" test ! -e "$copy/.napbox"

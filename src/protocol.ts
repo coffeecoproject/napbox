@@ -60,6 +60,7 @@ export const EgressMode = z.enum(["open", "none"]);
 export const ServiceExitRestart = z.enum(["none", "restarting", "gave_up"]);
 export const RunPurpose = z.enum(["up", "wake", "reset", "restart"]);
 export const Readiness = z.enum(["healthcheck", "port", "process"]);
+export const RootfsSource = z.enum(["unpacked", "cloned", "reused"]);
 export const OutputStream = z.enum(["stdout", "stderr"]);
 export const EventKind = z.enum([
   "started",
@@ -183,6 +184,7 @@ export const ServiceRun = z.object({
   startedAt: isoDate.optional(),
   readyAt: isoDate.optional(),
   readiness: Readiness.optional(),
+  rootfs: RootfsSource.optional(),
 });
 
 export const RunRecord = z.object({

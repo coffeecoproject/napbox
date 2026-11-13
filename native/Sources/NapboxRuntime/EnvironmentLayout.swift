@@ -29,24 +29,40 @@ struct EnvironmentLayout: Sendable {
     }
 
     /// 服务的根文件系统。和 Docker 决定要不要重建容器的规则一样：镜像和服务的定义（命令、环境变量、挂载等）
-    /// 都没变就沿用上次的，容器里写的东西还在；有一样变了就重新解包。
+    /// 都没变就沿用上次的，容器里写的东西还在；有一样变了就重建。
+    /// 重建时同一个镜像只解包一次：这次起环境已经为别的服务新解包过这个镜像，就用 APFS 克隆它（不占额外空间，
+    /// 几乎不花时间），不再解包一遍。
     /// - definition：服务定义的固定写法（键排好序的 JSON），由调用方给出
-    func rootfs(_ service: String, image: Containerization.Image, definition: String) async throws(NapboxError) -> Containerization.Mount {
+    /// - fresh：这次起环境新解包出来的根文件系统，按镜像（平台清单的 digest）记。只记新解包的：沿用的根文件系统里
+    ///   有容器写过的东西，不能拿来克隆。所有服务的根文件系统都在虚拟机起来之前准备好，这期间新解包的还没人写过
+    /// - 返回挂载和根文件系统是怎么来的（运行记录用）
+    func rootfs(_ service: String, image: Containerization.Image, definition: String,
+                fresh: inout [String: URL]) async throws(NapboxError) -> (mount: Containerization.Mount, source: ServiceRun.Rootfs) {
         let path = directory.appending(path: "rootfs/\(service).ext4")
         let stamp = directory.appending(path: "rootfs/\(service).stamp")
+        let mount = Containerization.Mount.block(format: "ext4", source: path.path, destination: "/", options: [])
         do {
-            let current = try await image.descriptor(for: linuxArm64).digest + "\n" + definition
+            let digest = try await image.descriptor(for: linuxArm64).digest
+            let current = digest + "\n" + definition
             if FileManager.default.fileExists(atPath: path.path), (try? String(contentsOf: stamp, encoding: .utf8)) == current {
-                return .block(format: "ext4", source: path.path, destination: "/", options: [])
+                return (mount, .reused)
             }
             // 重建：和 Docker 删掉旧容器再建新的一样，旧的根文件系统不要了（解包工具不会覆盖已有的文件）
             try? FileManager.default.removeItem(at: stamp)
             try? FileManager.default.removeItem(at: watchManifest(service)) // 同步进去的跟着旧的根文件系统没了
             try? FileManager.default.removeItem(at: populatedDirectory(service)) // 新容器，卷要不要带镜像内容重新看
             if FileManager.default.fileExists(atPath: path.path) { try FileManager.default.removeItem(at: path) }
-            let mount = try await EXT4Unpacker(capacityInBytes: Self.rootfsBytes, journal: Self.journal).unpack(image, for: linuxArm64, at: path)
+            let source: ServiceRun.Rootfs
+            if let original = fresh[digest] {
+                guard clonefile(original.path, path.path, 0) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+                source = .cloned
+            } else {
+                _ = try await EXT4Unpacker(capacityInBytes: Self.rootfsBytes, journal: Self.journal).unpack(image, for: linuxArm64, at: path)
+                fresh[digest] = path
+                source = .unpacked
+            }
             try Data(current.utf8).write(to: stamp)
-            return mount
+            return (mount, source)
         } catch {
             throw NapboxError(.imageUnavailable, "\(service) 的根文件系统准备失败：\(error)")
         }

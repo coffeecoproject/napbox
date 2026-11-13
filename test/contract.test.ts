@@ -169,6 +169,7 @@ const counterparts: Record<string, z.ZodType> = {
   "RunRecord.Purpose": protocol.RunPurpose,
   ServiceRun: protocol.ServiceRun,
   "ServiceRun.Readiness": protocol.Readiness,
+  "ServiceRun.Rootfs": protocol.RootfsSource,
   RunsResult: protocol.RunsResult,
   SubscribeParams: protocol.SubscribeParams,
   EnvironmentEvent: protocol.EnvironmentEvent,
