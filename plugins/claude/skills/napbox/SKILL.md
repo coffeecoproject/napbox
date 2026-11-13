@@ -44,7 +44,6 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 - **把这两件事写进项目的脚本**：对应的命令行是 `npx napbox up --temp <名字>`、`npx napbox down --temp <名字>` 和 `npx napbox run <服务> [-- 命令]`，`run` 的退出码和那个服务一样。
 - **工具报 `daemon_unavailable`**：调用 `setup`。它会下载约 700MB 的内核包并注册登录项，要先让用户知道。
 - **`compose_unsupported`**：compose 用了 napbox 不支持的写法，错误信息里有说明。项目原有的 compose 不要改，把情况告诉用户。
-- **`image_unavailable`，且镜像在 Docker 里有**：用 `image_import` 导入。
 
 ## 限制
 

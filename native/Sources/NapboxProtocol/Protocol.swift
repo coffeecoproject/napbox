@@ -127,7 +127,6 @@ public enum Method {
     /// exec、run 期间命令行还会在同一个连接上发 StdinMessage
     public static let streaming: Set<String> = [logs, exec, run, subscribe]
     public static let reset = "reset"
-    public static let imageImport = "image.import"
     /// 调用方创建环境：同名、同持有方、同目录再调用就和 up 一样
     public static let create = "create"
     /// 唤醒环境，服务都就绪后返回
@@ -401,29 +400,6 @@ public struct DownResult: Codable, Sendable {
         self.name = name
         self.releasedPorts = releasedPorts
         self.keptDataAt = keptDataAt
-    }
-}
-
-// MARK: - image import
-
-public struct ImageImportParams: Codable, Sendable {
-    /// 本机 Docker 里的镜像名，例如 minio/minio:RELEASE.2025-09-07T16-13-09Z
-    public var reference: String
-
-    public init(reference: String) {
-        self.reference = reference
-    }
-}
-
-public struct ImageImportResult: Codable, Sendable {
-    /// 导入后在 napbox 里的完整名字，例如 docker.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    public var reference: String
-    /// linux/arm64 的 manifest digest
-    public var digest: String
-
-    public init(reference: String, digest: String) {
-        self.reference = reference
-        self.digest = digest
     }
 }
 

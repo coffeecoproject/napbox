@@ -128,10 +128,6 @@ actor Daemon {
                 return try Wire.value(try await reset(try Requests.params(ResetParams.self, request)))
             case Method.down:
                 return try Wire.value(try await down(try Requests.params(EnvironmentParams.self, request)))
-            case Method.imageImport:
-                let params = try Requests.params(ImageImportParams.self, request)
-                let (reference, digest) = try await runtime.importFromDocker(params.reference)
-                return try Wire.value(ImageImportResult(reference: reference, digest: digest))
             default:
                 throw Requests.unknownMethod(request)
             }

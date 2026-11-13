@@ -12,7 +12,7 @@ struct Napbox: ParsableCommand {
         abstract: "给 agent 用的本地开发环境。",
         discussion: "npm 包里的 napbox 还有 setup [claude|codex]：准备内核、注册后台程序 napboxd，可以顺便把 MCP 服务加进 agent。",
         version: NapboxVersion.current,
-        subcommands: [Up.self, Run.self, Env.self, Logs.self, Exec.self, Reset.self, Sleep.self, Egress.self, Down.self, Status.self, ImageCommand.self]
+        subcommands: [Up.self, Run.self, Env.self, Logs.self, Exec.self, Reset.self, Sleep.self, Egress.self, Down.self, Status.self]
     )
 
     /// 替换 ArgumentParser 默认的入口：它把错误按文本打印，退出码也不统一。
@@ -260,22 +260,6 @@ struct Down: ParsableCommand {
     func run() throws {
         let params = EnvironmentParams(target: options.target)
         try Output.json(try Output.call(Method.down, params: try Wire.value(params), as: DownResult.self))
-    }
-}
-
-struct ImageCommand: ParsableCommand {
-    static let configuration = CommandConfiguration(commandName: "image", abstract: "管理 napbox 自己的镜像库。", subcommands: [Import.self])
-
-    struct Import: ParsableCommand {
-        static let configuration = CommandConfiguration(abstract: "从本机 Docker 导入镜像（给 Docker Hub 上已经拉不到的镜像用）。只读 Docker，不碰它的容器和数据。")
-
-        @Argument(help: "Docker 里的镜像名，例如 minio/minio:RELEASE.2025-09-07T16-13-09Z")
-        var reference: String
-
-        func run() throws {
-            let params = ImageImportParams(reference: reference)
-            try Output.json(try Output.call(Method.imageImport, params: try Wire.value(params), as: ImageImportResult.self))
-        }
     }
 }
 

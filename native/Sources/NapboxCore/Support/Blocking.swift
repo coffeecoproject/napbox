@@ -1,5 +1,5 @@
-// 会阻塞线程的事（跑外部命令 git、arp、docker save，删大文件）放到别的线程上做：调用方的 actor 在等待期间照常处理
-// 别的请求（比如导入大镜像的几分钟里，别的环境照样能唤醒）。用 Dispatch 的线程，不占 Swift 并发的线程池。
+// 会阻塞线程的事（跑外部命令 git、arp，删大文件）放到别的线程上做：调用方的 actor 在等待期间照常处理
+// 别的请求（比如删一个大数据卷的时候，别的环境照样能唤醒）。用 Dispatch 的线程，不占 Swift 并发的线程池。
 import Dispatch
 import NapboxProtocol
 

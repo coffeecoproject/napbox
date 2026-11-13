@@ -292,14 +292,6 @@ export const tools: readonly Tool[] = [
     },
   }),
   define({
-    name: "image_import",
-    title: "从 Docker 导入镜像",
-    description: "把本机 Docker 里的镜像导入 napbox，给 Docker Hub 上已经拉不到的旧版本用。只执行 docker save，不碰 Docker 的容器和数据。",
-    input: z.strictObject({ reference: z.string().describe("镜像名") }),
-    annotations: WRITE,
-    run: (args, context) => context.client.importImage(args.reference),
-  }),
-  define({
     name: "setup",
     title: "首次准备",
     description:

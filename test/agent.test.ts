@@ -76,7 +76,7 @@ test("MCP：初始化、工具列表和每个工具的输入说明", async (t) =
     annotations: { destructiveHint: boolean; readOnlyHint: boolean };
   }[];
   assert.deepEqual(tools.map((tool) => tool.name).sort(), [
-    "down", "egress", "env", "exec", "image_import", "logs", "reset", "run", "setup", "sleep", "status", "up",
+    "down", "egress", "env", "exec", "logs", "reset", "run", "setup", "sleep", "status", "up",
   ]);
   for (const tool of tools) {
     assert.equal(tool.inputSchema.type, "object", tool.name);

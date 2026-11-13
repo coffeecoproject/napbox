@@ -46,7 +46,6 @@ export const methods = {
   subscribe: "subscribe",
   run: "run",
   reset: "reset",
-  imageImport: "image.import",
   create: "create",
   wake: "wake",
   runs: "runs",
@@ -154,9 +153,6 @@ export const DownResult = z.object({
   keptDataAt: z.string().optional(),
 });
 
-export const ImageImportParams = z.object({ reference: z.string() });
-export const ImageImportResult = z.object({ reference: z.string(), digest: z.string() });
-
 export const StreamOutput = z.object({ stream: OutputStream, data: base64 });
 export const StdinMessage = z.object({ data: base64.optional(), end: z.boolean().optional() });
 
@@ -259,7 +255,6 @@ export type UpParams = z.infer<typeof UpParams>;
 export type RunParams = z.infer<typeof RunParams>;
 export type CreateParams = z.infer<typeof CreateParams>;
 export type DownResult = z.infer<typeof DownResult>;
-export type ImageImportResult = z.infer<typeof ImageImportResult>;
 export type LogsResult = z.infer<typeof LogsResult>;
 export type ExecResult = z.infer<typeof ExecResult>;
 export type ServiceRun = z.infer<typeof ServiceRun>;

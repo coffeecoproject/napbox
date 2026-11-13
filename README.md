@@ -57,7 +57,6 @@ All commands print JSON (`napbox status --text` prints a table).
 | `napbox reset <volume>` | Empty a named volume (the old data is kept for 7 days) |
 | `napbox sleep` / `napbox down` | Sleep now / remove the environment (data kept for 7 days) |
 | `napbox egress <open\|none>` | Switch network access |
-| `napbox image import <image>` | Import an image from local Docker, for images no registry serves any more |
 
 `--temp <name>` works with `up`, `env`, `logs`, `exec`, `egress` and `down`.
 

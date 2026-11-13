@@ -18,7 +18,7 @@
 
 ## 这个插件运行什么
 
-- **MCP 工具**：`up`、`run`、`env`、`status`、`logs`、`exec`、`reset`、`sleep`、`down`、`egress`、`image_import`、`setup`。
+- **MCP 工具**：`up`、`run`、`env`、`status`、`logs`、`exec`、`reset`、`sleep`、`down`、`egress`、`setup`。
 - **钩子**：会话开始和压缩上下文后，当前 worktree 有环境就告诉 agent 端口；已接入的项目（有环境记录或 `.napbox.yaml`）拦下 `docker compose up`、`start`、`run`；运行 `docker run` 或者自己在本机起数据库时只提醒一句，不拦。别的 `docker` 命令和没接入的项目不受影响。
 - 第一次启动某个版本时，npm 把固定版本的 `napbox` 包装进 `~/Library/Caches/napbox/`。
 

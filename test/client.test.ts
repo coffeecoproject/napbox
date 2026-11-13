@@ -203,10 +203,6 @@ describe("真实 napboxd：请求和错误码", () => {
     );
   });
 
-  test("importImage：运行环境没准备好（这里没有内核）报 runtime_unavailable", async () => {
-    await rejectsWithCode(client.importImage("alpine:latest"), "runtime_unavailable");
-  });
-
   test("subscribe：生效后回调，取消时以 signal.reason 拒绝，napboxd 不受影响", async () => {
     const controller = new AbortController();
     let subscribed = false;

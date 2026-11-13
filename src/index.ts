@@ -22,7 +22,6 @@ export {
   errorCodes,
   type EventKind,
   type ExecResult,
-  type ImageImportResult,
   type LogsResult,
   type OutputStream,
   type PortInfo,

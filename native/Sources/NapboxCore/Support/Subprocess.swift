@@ -1,4 +1,4 @@
-// 运行宿主机上的命令（git、arp、docker）：等它结束，拿到退出码和输出。
+// 运行宿主机上的命令（git、arp）：等它结束，拿到退出码和输出。
 import Foundation
 
 public enum Subprocess {
@@ -11,21 +11,20 @@ public enum Subprocess {
     }
 
     /// 运行不了（比如程序不存在）时抛出 Foundation 的错误。
-    /// - captureStdout：false 时标准输出丢掉（docker save 的输出很大又用不着）
-    public static func run(_ executable: String, _ arguments: [String], captureStdout: Bool = true) throws -> Output {
+    public static func run(_ executable: String, _ arguments: [String]) throws -> Output {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         let out = Pipe(), err = Pipe()
-        process.standardOutput = captureStdout ? out : FileHandle.nullDevice
+        process.standardOutput = out
         process.standardError = err
         try process.run()
         // 两个管道在这条线程上一起读：
         // - 先读完一个再读另一个的话，命令往另一个写满管道缓冲（64KB）时双方互相等着
         // - 另要一条公用线程来读的话，公用线程全被等着命令的调用占满时（同一时刻上百个请求各问一次 git）谁也等不到，永远卡住
-        let data = readToEnd(captureStdout ? [err.fileHandleForReading, out.fileHandleForReading] : [err.fileHandleForReading])
+        let data = readToEnd([err.fileHandleForReading, out.fileHandleForReading])
         process.waitUntilExit()
-        return Output(status: process.terminationStatus, stdout: captureStdout ? data[1] : Data(), stderr: data[0])
+        return Output(status: process.terminationStatus, stdout: data[1], stderr: data[0])
     }
 
     /// 几个管道一起读，各自读到对面关掉为止

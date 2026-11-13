@@ -2202,30 +2202,3 @@ describe("端口转发", { concurrency: false }, () => {
     assert.match((await readAll(8081)).toString(), /^10\.88\.0\.1$/);
   });
 });
-
-describe("从本机 Docker 导入镜像", { concurrency: false }, () => {
-  // 导入会写镜像库，所以用一份写时复制的副本（APFS 克隆，几乎不占空间），不碰正在用的镜像库
-  const isolated = path.join(work, "imp"); // socket 路径有长度上限
-  let daemon: Daemon;
-
-  before(async () => {
-    mkdirSync(isolated);
-    execFileSync("cp", ["-c", "-R", path.join(real as string, "images"), path.join(isolated, "images")]);
-    symlinkSync(path.join(real as string, "kernel"), path.join(isolated, "kernel"));
-    symlinkSync(path.join(real as string, "runc"), path.join(isolated, "runc"));
-    daemon = await startDaemon(isolated, path.join(work, "import.log"));
-  });
-  after(() => daemon.stop("SIGTERM"));
-
-  test("没有这个镜像：image_unavailable", async () => {
-    await rejectsWithCode(daemon.client.importImage("napbox-test/not-here:1"), "image_unavailable");
-  });
-
-  test("有这个镜像：导入后返回完整名字和 digest", async (t) => {
-    const present = spawnSync("docker", ["image", "inspect", "alpine:latest"], { stdio: "ignore" });
-    if (present.status !== 0) return t.skip("本机 Docker 没有 alpine:latest（或 Docker 没运行）");
-    const imported = await daemon.client.importImage("alpine:latest");
-    assert.equal(imported.reference, "docker.io/library/alpine:latest");
-    assert.match(imported.digest, /^sha256:/);
-  });
-});

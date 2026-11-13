@@ -57,7 +57,6 @@ agent 第一次要起服务时，napbox 会报还没准备好，agent 就去调�
 | `napbox reset <数据卷>` | 清空一个命名卷（旧数据保留 7 天） |
 | `napbox sleep` / `napbox down` | 马上休眠 / 回收环境（数据保留 7 天） |
 | `napbox egress <open\|none>` | 切换能不能上外网 |
-| `napbox image import <镜像>` | 从本机 Docker 导入镜像，给仓库里已经拉不到的镜像用 |
 
 `up`、`env`、`logs`、`exec`、`egress`、`down` 可以加 `--temp <名字>`。
 

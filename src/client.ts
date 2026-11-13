@@ -24,7 +24,6 @@ import {
   type EnvironmentTarget,
   type ErrorCode,
   ExecResult,
-  ImageImportResult,
   LogsResult,
   methods,
   type OutputStream,
@@ -203,14 +202,6 @@ export class NapboxClient {
       method: methods.reset,
       params: { target, volume },
       result: EnvironmentInfo,
-    });
-  }
-
-  importImage(reference: string): Promise<ImageImportResult> {
-    return this.exchange({
-      method: methods.imageImport,
-      params: { reference },
-      result: ImageImportResult,
     });
   }
 

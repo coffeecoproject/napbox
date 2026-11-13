@@ -88,7 +88,7 @@ enum Images {
         do {
             return try await store.pull(reference: reference, platform: linuxArm64)
         } catch {
-            throw NapboxError(.imageUnavailable, "\(service) 的镜像 \(reference) 拉不下来：\(error)。如果是 Docker Hub 上已经拉不到的旧版本、本机 Docker 里有，先运行 napbox image import \(reference) 从 Docker 导入。")
+            throw NapboxError(.imageUnavailable, "\(service) 的镜像 \(reference) 拉不下来：\(error)")
         }
     }
 }
