@@ -82,6 +82,14 @@ describe("真实 napboxd：请求和错误码", () => {
     );
   });
 
+  test("down 带 discardData 只能用在调用方持有的环境：按目录指定报 usage_error", async () => {
+    const repo = gitRepo("discard", "services: {}\n");
+    await rejectsWithCode(client.down({ cwd: repo }, { discardData: true }), "usage_error");
+    await rejectsWithCode(client.down({ cwd: repo, temp: "t" }, { discardData: true }), "usage_error");
+    // false 和不写一样，照常按目录找环境
+    await rejectsWithCode(client.down({ cwd: repo }, { discardData: false }), "environment_not_found");
+  });
+
   test("exec 没给命令：bad_request", async () => {
     await rejectsWithCode(
       client.exec({ target: missing, service: "app", command: [], onOutput: () => {} }),

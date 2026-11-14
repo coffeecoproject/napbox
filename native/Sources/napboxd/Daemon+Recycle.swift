@@ -9,8 +9,12 @@ extension Daemon {
     // MARK: - down
 
     /// 回收环境：停掉服务、不再监听、释放端口、删掉登记；数据卷移到 recycled 目录保留 7 天。
-    /// 临时环境的数据直接删掉。调用方按名字销毁时也走这里。
-    func down(_ params: EnvironmentParams) async throws(NapboxError) -> DownResult {
+    /// 临时环境的数据直接删掉。调用方按名字销毁时也走这里，带 discardData 时数据也直接删掉。
+    func down(_ params: DownParams) async throws(NapboxError) -> DownResult {
+        let discardData = params.discardData == true
+        if discardData, case .directory = params.target {
+            throw NapboxError(.usageError, "discardData 只能用在调用方持有的环境（按 name、owner 指定）；worktree 的开发环境回收后数据保留 7 天，临时环境本来就直接删")
+        }
         let queued = try await record(for: params.target)
         let reason = queued.owner.callerID.map { "\($0) 销毁" } ?? "napbox down"
         return try await serialized(queued.name) { () throws(NapboxError) in
@@ -18,22 +22,25 @@ extension Daemon {
             guard let record = await self.environmentRecord(queued.name) else {
                 throw NapboxError(.environmentNotFound, "环境 \(queued.name) 没有了（排队期间已经回收）")
             }
-            return try await self.recycle(record, reason: reason)
+            return try await self.recycle(record, reason: reason, discardData: discardData)
         }
     }
 
     /// 先停、再移走数据（临时环境是删掉），都成功了才关监听、放端口、删登记：移数据失败时环境还是完整登记着的
     /// 休眠状态，有连接进来照样唤醒，下次再回收。
-    func recycle(_ record: EnvironmentRecord, reason: String) async throws(NapboxError) -> DownResult {
+    /// discardData：调用方要求不保留数据，移走后马上删；删失败时结果里的 keptDataAt 写明数据还在哪（7 天后删）。
+    func recycle(_ record: EnvironmentRecord, reason: String, discardData: Bool = false) async throws(NapboxError) -> DownResult {
         if shuttingDown { throw Self.exiting }
         await stopRunning(record.name)
         let runtime = runtime
         var kept: URL?
-        if record.temporary == nil {
-            kept = try runtime.recycle(record, reason: reason)
-        } else {
-            // 删大文件要一会儿，不占着 actor
+        // 删大文件要一会儿，不占着 actor
+        if record.temporary != nil {
             try await Blocking.run { () throws(NapboxError) in try runtime.delete(record) }
+        } else if discardData {
+            kept = try await Blocking.run { () throws(NapboxError) in try runtime.discard(record, reason: reason) }
+        } else {
+            kept = try runtime.recycle(record, reason: reason)
         }
         await removeBuiltImages(record.name)
         await closeListeners(record.name)

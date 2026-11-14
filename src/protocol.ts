@@ -133,6 +133,7 @@ export const RunParams = z.object({
 });
 
 export const EnvironmentParams = z.object({ target: EnvironmentTarget });
+export const DownParams = z.object({ target: EnvironmentTarget, discardData: z.boolean().optional() });
 
 export const CreateParams = z.object({
   name: z.string(),
@@ -254,6 +255,7 @@ export type EnvironmentTarget = z.infer<typeof EnvironmentTarget>;
 export type UpParams = z.infer<typeof UpParams>;
 export type RunParams = z.infer<typeof RunParams>;
 export type CreateParams = z.infer<typeof CreateParams>;
+export type DownParams = z.infer<typeof DownParams>;
 export type DownResult = z.infer<typeof DownResult>;
 export type LogsResult = z.infer<typeof LogsResult>;
 export type ExecResult = z.infer<typeof ExecResult>;

@@ -280,6 +280,11 @@ public actor Runtime {
         try storage.recycleEnvironment(record, reason: reason)
     }
 
+    /// 调用方要求不保留数据的销毁：删掉了返回 nil，删失败时返回数据还留着的地方（7 天后删）。环境要先停掉。
+    public nonisolated func discard(_ record: EnvironmentRecord, reason: String) throws(NapboxError) -> URL? {
+        try storage.discardEnvironment(record, reason: reason)
+    }
+
     /// 临时环境销毁：整个环境目录直接删掉，不保留。环境要先停掉。
     public nonisolated func delete(_ record: EnvironmentRecord) throws(NapboxError) {
         try storage.deleteEnvironment(record)

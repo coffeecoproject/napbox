@@ -150,6 +150,7 @@ const counterparts: Record<string, z.ZodType> = {
   UpParams: protocol.UpParams,
   RunParams: protocol.RunParams,
   EnvironmentParams: protocol.EnvironmentParams,
+  DownParams: protocol.DownParams,
   CreateParams: protocol.CreateParams,
   ServiceExit: protocol.ServiceExit,
   "ServiceExit.Restart": protocol.ServiceExitRestart,

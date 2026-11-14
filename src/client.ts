@@ -17,6 +17,7 @@ import type { z } from "zod";
 import {
   CreateParams,
   DownResult,
+  type DownParams,
   EmptyResult,
   EnvironmentInfo,
   type EgressMode,
@@ -34,6 +35,9 @@ import {
   type RunParams,
   type UpParams,
 } from "./protocol.ts";
+
+/** down 的选项：discardData 见 DownParams */
+export type DownOptions = Omit<DownParams, "target">;
 
 export class NapboxError extends Error {
   override name = "NapboxError";
@@ -181,8 +185,14 @@ export class NapboxClient {
     return this.exchange({ method: methods.sleep, params: { target }, result: EnvironmentInfo });
   }
 
-  down(target: EnvironmentTarget): Promise<DownResult> {
-    return this.exchange({ method: methods.down, params: { target }, result: DownResult });
+  /**
+   * 销毁环境。`discardData: true` 时数据直接删掉，不留 7 天，只能用在调用方持有的环境（`{ name, owner }`），
+   * 别的环境报 usage_error。删掉了结果里没有 `keptDataAt`；有的话就是没删成，数据还在那里（7 天后删）。
+   * 旧版 napboxd 不认识这个参数，会照常留 7 天，所以要看 `keptDataAt` 确认。
+   */
+  down(target: EnvironmentTarget, options: DownOptions = {}): Promise<DownResult> {
+    const params: DownParams = { target, ...options };
+    return this.exchange({ method: methods.down, params, result: DownResult });
   }
 
   runs(target: EnvironmentTarget): Promise<RunsResult> {

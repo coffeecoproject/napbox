@@ -258,7 +258,7 @@ struct Down: ParsableCommand {
     @OptionGroup var options: TargetOptions
 
     func run() throws {
-        let params = EnvironmentParams(target: options.target)
+        let params = DownParams(target: options.target)
         try Output.json(try Output.call(Method.down, params: try Wire.value(params), as: DownResult.self))
     }
 }

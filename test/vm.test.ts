@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -589,6 +590,39 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     const destroyed = await waitEvent("destroyed");
     assert.ok(destroyed.reason);
     await rejectsWithCode(client.environment(target), "environment_not_found");
+  });
+
+  test("down 带 discardData：数据直接删掉，不进 recycled，结果里没有 keptDataAt；同名再建是空的", async () => {
+    const count = (dir: string) => {
+      const full = path.join(support, dir);
+      return existsSync(full) ? readdirSync(full).length : 0;
+    };
+    const throwaway = { name: "codeos/goal-1-discard", owner: "codeos" };
+    const dir = repo(
+      "goal/discard/repo",
+      "services:\n  app:\n    image: alpine:3.20\n    volumes: [\"data:/data\"]\n    command: [\"sleep\", \"100000\"]\n    stop_grace_period: 1s\nvolumes:\n  data:\n",
+    );
+    const environmentsBefore = count("environments");
+    const recycledBefore = count("recycled");
+    await client.create({ ...throwaway, directory: dir });
+    const shell = (script: string) =>
+      client.exec({ target: throwaway, service: "app", command: ["sh", "-c", script], onOutput: () => {} });
+    const write = await shell("echo kept > /data/who");
+    assert.equal(write.exitCode, 0);
+    assert.equal(count("environments"), environmentsBefore + 1);
+
+    const down = await client.down(throwaway, { discardData: true });
+    assert.equal(down.name, throwaway.name);
+    assert.equal(down.keptDataAt, undefined);
+    assert.equal(count("environments"), environmentsBefore);
+    assert.equal(count("recycled"), recycledBefore);
+    await rejectsWithCode(client.environment(throwaway), "environment_not_found");
+
+    await client.create({ ...throwaway, directory: dir });
+    // 只看退出码不为 0 的话，卷没挂上、exec 出错也会过：要数据卷在、里面没有那个文件
+    const empty = await shell("test -d /data && test ! -e /data/who");
+    assert.equal(empty.exitCode, 0, "数据卷应该在、而且是空的");
+    await client.down(throwaway, { discardData: true });
   });
 
   test("subscribe 按持有方过滤：别的持有方的事件收不到", () => {

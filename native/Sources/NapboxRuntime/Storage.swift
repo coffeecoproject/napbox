@@ -53,6 +53,22 @@ struct Storage: Sendable {
         try moveToRecycled(environmentDirectory(record), keptAt: nil, record: record, label: nil, reason: reason)
     }
 
+    /// 调用方要求不保留数据：环境目录先整个移到 recycled/<环境 ID>-<时间>/data（一步改名，不会删到一半还登记着），
+    /// 再删掉。删失败时还在 recycled 里，旁边的 recycled.json 先不动，照常 7 天后删，返回那个目录；删掉了返回 nil。
+    func discardEnvironment(_ record: EnvironmentRecord, reason: String) throws(NapboxError) -> URL? {
+        guard let target = try moveToRecycled(environmentDirectory(record), keptAt: "data", record: record, label: nil,
+                                              reason: reason) else { return nil }
+        do {
+            try FileManager.default.removeItem(at: target.appending(path: "data"))
+        } catch {
+            print("删 \(target.path) 失败，留在 recycled 里 7 天后再删：\(error.localizedDescription)")
+            return target
+        }
+        // 只剩 recycled.json，删不掉也只是一个小文件，到期照样删
+        try? FileManager.default.removeItem(at: target)
+        return nil
+    }
+
     /// 临时环境销毁：整个环境目录直接删掉，不保留。
     func deleteEnvironment(_ record: EnvironmentRecord) throws(NapboxError) {
         let directory = environmentDirectory(record)

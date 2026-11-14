@@ -2,6 +2,7 @@
 export {
   type CreateOptions,
   defaultSocketPath,
+  type DownOptions,
   type ExecOptions,
   type LogsOptions,
   NapboxClient,

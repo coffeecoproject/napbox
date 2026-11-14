@@ -309,12 +309,25 @@ public enum EnvironmentTarget: Codable, Sendable, Equatable {
     }
 }
 
-/// sleep、wake、down、runs、environment 这类只要指定环境的操作
+/// sleep、wake、runs、environment 这类只要指定环境的操作
 public struct EnvironmentParams: Codable, Sendable {
     public var target: EnvironmentTarget
 
     public init(target: EnvironmentTarget) {
         self.target = target
+    }
+}
+
+/// 销毁环境
+public struct DownParams: Codable, Sendable {
+    public var target: EnvironmentTarget
+    /// true：数据直接删掉，不在 recycled 留 7 天。只能用在调用方持有的环境（按 `{name, owner}` 指定），
+    /// 别的环境带上报 usage_error。不写或 false：和命令行的 down 一样留 7 天（临时环境本来就直接删）
+    public var discardData: Bool?
+
+    public init(target: EnvironmentTarget, discardData: Bool? = nil) {
+        self.target = target
+        self.discardData = discardData
     }
 }
 
@@ -393,7 +406,8 @@ public struct EgressParams: Codable, Sendable {
 public struct DownResult: Codable, Sendable {
     public var name: String
     public var releasedPorts: [Int]
-    /// 数据卷移到这里保留 7 天。临时环境的数据直接删，是 nil
+    /// 数据卷移到这里保留 7 天。数据直接删掉时（临时环境、带 discardData 的）是 nil；
+    /// 带 discardData 但删的时候失败了，数据留在这里，照常 7 天后删
     public var keptDataAt: String?
 
     public init(name: String, releasedPorts: [Int], keptDataAt: String?) {
