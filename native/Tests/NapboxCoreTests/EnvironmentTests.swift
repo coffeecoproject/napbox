@@ -265,7 +265,10 @@ import NapboxProtocol
 }
 
 @Suite(.serialized) struct PortTests {
-    /// 测试用一段不常用的端口，避开 40000–49999 里可能正在用的
+    /// 测试用一段不常用的端口，避开 40000–49999 里可能正在用的。
+    /// 每个用例用自己的端口，不去绑别的用例（或自己）刚关掉的端口：建子进程时内核把父进程打开的文件
+    /// （含 close-on-exec 的）复制给子进程，到子进程 exec 才关，这段时间里刚 close 的监听 socket 还绑着端口，
+    /// 再绑报地址被占用（实测最长约 0.7ms）。整组跑时别的用例在同时起子进程，所以会偶尔撞上。
     let range = 38400...38409
 
     func requests(_ items: [(String, Int)]) -> [PortRequest] { items.map { PortRequest(service: $0.0, containerPort: $0.1) } }
@@ -334,6 +337,7 @@ import NapboxProtocol
           db: {image: postgres, ports: ["5432"]}
           api: {image: alpine, ports: ["8080"], profiles: [api]}
         """]
+        let range = 38430...38431 // 单独一段：allocateSkipBusyAndStayStable 刚关掉开头的端口
         let locks = PortLocks()
         var registry = NapboxState()
         func up(_ profiles: [String]) throws -> EnvironmentRecord {
@@ -357,11 +361,9 @@ import NapboxProtocol
     /// 新端口从上次分到的后面接着分：回收的环境放开的端口不马上分给下一个，过期的地址连上去是没人监听；
     /// 到范围末尾从头再找，跳过还登记着的
     @Test func releasedPortsAreNotReusedRightAway() throws {
-        // 刚关掉的监听端口马上再绑，在同一进程里有别的线程正起子进程时会有约 0.2ms 绑不上（地址被占用，
-        // 连上去还能连通，2026-11-13 实测）。别的用例（SubprocessTests）在同时起子进程，所以这里：
-        // - 单独一段端口，不去锁别的用例刚关掉的
-        // - down 只去掉登记、不放开锁：分配顺序只由登记表和接续位置决定，和锁无关；d 绕回来分到 a 的端口时不用重新绑
-        let range = 38420...38422
+        // 单独一段端口；down 只去掉登记、不放开锁（锁放开后马上再绑可能撞上内核的空当，见 range 的说明）。
+        // 分配顺序只由登记表和接续位置决定，和锁无关
+        let range = 38420...38423
         let locks = PortLocks()
         var registry = NapboxState()
         func up(_ name: String) throws -> PortAllocation {
@@ -373,13 +375,14 @@ import NapboxProtocol
         }
         func down(_ name: String) { registry.environments.removeAll { $0.name == name } }
         #expect(try up("a/main").ports.map(\.hostPort) == [range.lowerBound])
-        down("a/main")
-        #expect(try up("b/main").ports.map(\.hostPort) == [range.lowerBound + 1], "a 放开的端口不马上给 b")
-        let again = try up("b/main")
-        #expect(again.ports.map(\.hostPort) == [range.lowerBound + 1] && again.lastNew == nil, "再次 up 沿用，不动接续位置")
-        #expect(registry.lastAssignedPort == range.lowerBound + 1)
-        #expect(try up("c/main").ports.map(\.hostPort) == [range.lowerBound + 2])
-        #expect(try up("d/main").ports.map(\.hostPort) == [range.lowerBound], "到末尾从头找，跳过 b、c 还登记着的")
+        #expect(try up("b/main").ports.map(\.hostPort) == [range.lowerBound + 1])
+        down("b/main")
+        #expect(try up("c/main").ports.map(\.hostPort) == [range.lowerBound + 2], "b 放开的端口不马上给 c")
+        let again = try up("c/main")
+        #expect(again.ports.map(\.hostPort) == [range.lowerBound + 2] && again.lastNew == nil, "再次 up 沿用，不动接续位置")
+        #expect(registry.lastAssignedPort == range.lowerBound + 2)
+        #expect(try up("d/main").ports.map(\.hostPort) == [range.upperBound])
+        #expect(try up("e/main").ports.map(\.hostPort) == [range.lowerBound + 1], "到末尾从头找，跳过 a 还登记着的，拿到 b 放开的")
     }
 
     @Test func napboxdRestartRelocks() throws {
