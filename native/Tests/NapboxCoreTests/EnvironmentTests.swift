@@ -357,8 +357,10 @@ import NapboxProtocol
     /// 新端口从上次分到的后面接着分：回收的环境放开的端口不马上分给下一个，过期的地址连上去是没人监听；
     /// 到范围末尾从头再找，跳过还登记着的
     @Test func releasedPortsAreNotReusedRightAway() throws {
-        // 单独一段：和别的用例共用 range 开头时，全部一起跑偶尔锁不上，原因未知
-        // （按顺序重放这几个用例对这些端口的操作 200 轮，没有复现）
+        // 刚关掉的监听端口马上再绑，在同一进程里有别的线程正起子进程时会有约 0.2ms 绑不上（地址被占用，
+        // 连上去还能连通，2026-11-13 实测）。别的用例（SubprocessTests）在同时起子进程，所以这里：
+        // - 单独一段端口，不去锁别的用例刚关掉的
+        // - down 只去掉登记、不放开锁：分配顺序只由登记表和接续位置决定，和锁无关；d 绕回来分到 a 的端口时不用重新绑
         let range = 38420...38422
         let locks = PortLocks()
         var registry = NapboxState()
@@ -369,10 +371,7 @@ import NapboxProtocol
             registry.recordAllocation(allocation)
             return allocation
         }
-        func down(_ name: String) {
-            for p in registry.environment(name)?.ports ?? [] { locks.release(p.hostPort) }
-            registry.environments.removeAll { $0.name == name }
-        }
+        func down(_ name: String) { registry.environments.removeAll { $0.name == name } }
         #expect(try up("a/main").ports.map(\.hostPort) == [range.lowerBound])
         down("a/main")
         #expect(try up("b/main").ports.map(\.hostPort) == [range.lowerBound + 1], "a 放开的端口不马上给 b")
