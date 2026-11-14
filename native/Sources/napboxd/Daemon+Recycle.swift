@@ -26,21 +26,33 @@ extension Daemon {
         }
     }
 
-    /// 先停、再移走数据（临时环境是删掉），都成功了才关监听、放端口、删登记：移数据失败时环境还是完整登记着的
-    /// 休眠状态，有连接进来照样唤醒，下次再回收。
+    /// 先停，在登记里记上“回收中”，再移走数据（临时环境是删掉），都成功了才关监听、放端口、删登记。
+    /// 移数据失败时去掉记号，环境还是完整登记着的休眠状态，有连接进来照样唤醒，下次再回收。
+    /// napboxd 在中间被杀时，下次启动由 finishPendingOperations 接着做完。
     /// discardData：调用方要求不保留数据，移走后马上删；删失败时结果里的 keptDataAt 写明数据还在哪（7 天后删）。
     func recycle(_ record: EnvironmentRecord, reason: String, discardData: Bool = false) async throws(NapboxError) -> DownResult {
         if shuttingDown { throw Self.exiting }
         await stopRunning(record.name)
+        try setPending(record.name, .recycle(reason: reason, discardData: discardData))
+        return try await finishRecycle(record, reason: reason, discardData: discardData)
+    }
+
+    /// 回收的后半段：环境已经停了、登记里已经记上“回收中”
+    private func finishRecycle(_ record: EnvironmentRecord, reason: String, discardData: Bool) async throws(NapboxError) -> DownResult {
         let runtime = runtime
         var kept: URL?
-        // 删大文件要一会儿，不占着 actor
-        if record.temporary != nil {
-            try await Blocking.run { () throws(NapboxError) in try runtime.delete(record) }
-        } else if discardData {
-            kept = try await Blocking.run { () throws(NapboxError) in try runtime.discard(record, reason: reason) }
-        } else {
-            kept = try runtime.recycle(record, reason: reason)
+        do {
+            // 删大文件要一会儿，不占着 actor
+            if record.temporary != nil {
+                try await Blocking.run { () throws(NapboxError) in try runtime.delete(record) }
+            } else if discardData {
+                kept = try await Blocking.run { () throws(NapboxError) in try runtime.discard(record, reason: reason) }
+            } else {
+                kept = try runtime.recycle(record, reason: reason)
+            }
+        } catch {
+            try? setPending(record.name, nil)
+            throw error
         }
         await removeBuiltImages(record.name)
         await closeListeners(record.name)
@@ -52,6 +64,45 @@ extension Daemon {
         if record.owner == .worktree, record.temporary == nil { removePortsFile(worktree: URL(fileURLWithPath: record.worktree)) }
         events.emit(EnvironmentEvent(at: Date(), environment: record.name, owner: record.owner.callerID, type: .destroyed, reason: reason))
         return DownResult(name: record.name, releasedPorts: record.ports.map(\.hostPort).sorted(), keptDataAt: kept?.path)
+    }
+
+    /// 在登记里记上（nil 是去掉）开始了还没做完的操作
+    func setPending(_ name: String, _ pending: EnvironmentRecord.PendingOperation?) throws(NapboxError) {
+        try store.update { (state: inout NapboxState) throws(NapboxError) in
+            guard let i = state.environments.firstIndex(where: { $0.name == name }) else {
+                throw NapboxError(.environmentNotFound, "环境 \(name) 没有登记")
+            }
+            state.environments[i].pending = pending
+        }
+    }
+
+    /// napboxd 启动时、开始监听端口之前：上次没做完的回收和 reset 接着做完（这时环境都没在运行）；
+    /// 再删掉登记里没有的环境留下的构建结果。做不完的记进日志：回收移不走数据时环境照常登记、休眠，
+    /// reset 移不走卷时卷原样留着（这两种都去掉记号）；移走了、写状态文件失败的，记号留着下次再做。
+    func finishPendingOperations() async {
+        for record in store.state.environments {
+            switch record.pending {
+            case nil:
+                continue
+            case .recycle(let reason, let discardData):
+                print("环境 \(record.name) 上次回收没做完（\(reason)），接着做")
+                do {
+                    let result = try await finishRecycle(record, reason: reason, discardData: discardData)
+                    if let kept = result.keptDataAt { print("环境 \(record.name) 的数据没删掉，留在 \(kept)，7 天后删") }
+                } catch {
+                    print("环境 \(record.name) 回收失败，照常登记、下次再回收：\(error.message)")
+                }
+            case .resetVolume(let volume):
+                print("环境 \(record.name) 上次 reset \(volume) 没做完，接着做")
+                do {
+                    _ = try finishReset(record, volume: volume)
+                } catch {
+                    print("环境 \(record.name) reset \(volume) 没做完：\(error.message)")
+                }
+            }
+        }
+        let ids = Set(store.state.environments.map(\.id))
+        for message in await runtime.removeLeftoverBuilds(keeping: ids) { print(message) }
     }
 
     /// 只是多占点硬盘，不算回收失败

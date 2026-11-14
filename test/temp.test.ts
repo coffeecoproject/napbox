@@ -17,6 +17,7 @@ import {
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { after, afterEach, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { NapboxClient } from "../src/client.ts";
@@ -505,6 +506,34 @@ describe("napbox run", { concurrency: false }, () => {
     cancel.abort(new Error("不等了"));
     await assert.rejects(pending, /不等了/);
     await waitUntil("run 的临时环境销毁", async () => (await runEnvironment()) === undefined, 30_000);
+    await assertOnlyDevLeft();
+  });
+
+  test("构建期间命令行断开：构建完就停下，不登记、不起环境，构建结果删掉", async () => {
+    const slow = repo("run-slow-build", "services:\n  check:\n    build: .\n    command: [\"echo\", \"不该跑到\"]\n");
+    writeFileSync(path.join(slow, "Dockerfile"), `FROM alpine:3.20\nRUN echo ${randomBytes(4).toString("hex")} && sleep 15\n`);
+    const logs = path.join(support, "builder", "logs");
+    const buildLogs = () => (existsSync(logs) ? readdirSync(logs).length : 0);
+    const logsBefore = buildLogs();
+    const cancel = new AbortController();
+    const pending = client.run({ cwd: slow, environment: {}, service: "check", onOutput: () => {}, signal: cancel.signal });
+    pending.catch(() => {});
+    await waitUntil("开始构建", async () => buildLogs() > logsBefore, 60_000);
+    cancel.abort(new Error("不等了"));
+    await assert.rejects(pending, /不等了/);
+    // 构建还要十几秒：这期间和之后都不该出现这个临时环境
+    let seen = false;
+    await waitUntil(
+      "构建完、构建结果删掉",
+      async () => {
+        if ((await runEnvironment()) !== undefined) seen = true;
+        return buildLogs() === logsBefore;
+      },
+      180_000,
+    );
+    assert.equal(seen, false, "断开以后不该再登记、起环境");
+    await delay(1_000);
+    assert.equal(await runEnvironment(), undefined);
     await assertOnlyDevLeft();
   });
 });

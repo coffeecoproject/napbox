@@ -81,28 +81,31 @@ class TailBuffer {
   }
 }
 
-/** exec、run 共用：收下输出，到时间就取消。超时不抛，返回 timedOut 和已经收到的输出 */
+/**
+ * exec、run 共用：收下输出，超时不抛，返回 timedOut 和已经收到的输出。
+ * - seconds：给了就到时间取消（run，从起环境算起）；不给是 start 自己把时限交给 napboxd（exec：它确认命令结束了才返回）
+ */
 async function capture(
-  seconds: number,
+  seconds: number | undefined,
   context: ToolContext,
-  start: (onOutput: (output: Output) => void, signal: AbortSignal) => Promise<{ exitCode: number }>,
+  start: (onOutput: (output: Output) => void, signal: AbortSignal) => Promise<{ exitCode: number; timedOut?: true }>,
 ) {
   const stdout = new TailBuffer();
   const stderr = new TailBuffer();
-  const timeout = AbortSignal.timeout(seconds * 1000);
+  const timeout = seconds === undefined ? undefined : AbortSignal.timeout(seconds * 1000);
   const captured = () => ({
     stdout: stdout.text,
     stderr: stderr.text,
     droppedBytes: { stdout: stdout.droppedBytes, stderr: stderr.droppedBytes },
   });
   try {
-    const { exitCode } = await start(
+    const { exitCode, timedOut } = await start(
       ({ stream, data }) => (stream === "stdout" ? stdout : stderr).add(data),
-      AbortSignal.any([context.signal, timeout]),
+      timeout ? AbortSignal.any([context.signal, timeout]) : context.signal,
     );
-    return { exitCode, ...captured() };
+    return { exitCode, ...(timedOut ? { timedOut } : {}), ...captured() };
   } catch (error) {
-    if (!timeout.aborted) throw error;
+    if (!timeout?.aborted) throw error;
     return { timedOut: true, ...captured() };
   }
 }
@@ -232,16 +235,17 @@ export const tools: readonly Tool[] = [
       service: z.string().describe("服务名"),
       command: z.array(z.string()).min(1).describe('命令和参数，比如 ["sh", "-c", "ls /app | wc -l"]'),
       stdin: z.string().optional().describe("给命令的标准输入"),
-      timeoutSeconds: timeoutSeconds(DEFAULT_EXEC_SECONDS, ""),
+      timeoutSeconds: timeoutSeconds(DEFAULT_EXEC_SECONDS, "，从命令开始跑算起，休眠时唤醒环境的时间不算在内"),
     }),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
     async run(args, context) {
       const environmentTarget = await target(args, context);
-      return capture(args.timeoutSeconds ?? DEFAULT_EXEC_SECONDS, context, (onOutput, signal) =>
+      return capture(undefined, context, (onOutput, signal) =>
         context.client.exec({
           target: environmentTarget,
           service: args.service,
           command: args.command,
+          timeoutSeconds: args.timeoutSeconds ?? DEFAULT_EXEC_SECONDS,
           stdin: args.stdin,
           onOutput,
           signal,

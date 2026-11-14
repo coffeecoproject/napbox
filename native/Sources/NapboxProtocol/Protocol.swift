@@ -500,19 +500,25 @@ public struct ExecParams: Codable, Sendable {
     public var target: EnvironmentTarget
     public var service: String
     public var command: [String]
+    /// 最多跑多久，从命令开始跑算起（休眠时先唤醒，唤醒的时间不算）；nil 是一直等。到时结束命令和它的子进程，确认结束了才返回（timedOut）
+    public var timeoutSeconds: Int?
 
-    public init(target: EnvironmentTarget, service: String, command: [String]) {
+    public init(target: EnvironmentTarget, service: String, command: [String], timeoutSeconds: Int? = nil) {
         self.target = target
         self.service = service
         self.command = command
+        self.timeoutSeconds = timeoutSeconds
     }
 }
 
 public struct ExecResult: Codable, Sendable {
     public var exitCode: Int32
+    /// 到了 timeoutSeconds 被 napbox 结束的：exitCode 是结束后的退出码（一般是 137）。没超时不写
+    public var timedOut: Bool?
 
-    public init(exitCode: Int32) {
+    public init(exitCode: Int32, timedOut: Bool? = nil) {
         self.exitCode = exitCode
+        self.timedOut = timedOut
     }
 }
 

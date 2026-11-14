@@ -68,9 +68,11 @@ actor Daemon {
         print("读到 \(store.state.environments.count) 个环境，锁上 \(locks.lockedPorts.count)/\(count) 个端口")
     }
 
-    /// 启动后调用：先回收 napboxd 没运行期间 worktree 被删掉的环境、销毁上次留下的临时环境、清理保留期满的数据，
-    /// 再给登记过的环境开始监听端口（有连接进来就唤醒）；之后定时检查闲置、worktree 删除和保留期。
+    /// 启动后、处理请求之前调用：先把上次没做完的回收和 reset 做完、删掉没有登记的环境留下的构建结果，
+    /// 再回收 napboxd 没运行期间 worktree 被删掉的环境、销毁上次留下的临时环境、清理保留期满的数据，
+    /// 最后给登记过的环境开始监听端口（有连接进来就唤醒）；之后定时检查闲置、worktree 删除和保留期。
     func begin() async {
+        await finishPendingOperations()
         await reclaimDeletedWorktrees()
         await destroyLeftoverTemporaries()
         await purgeRecycled()

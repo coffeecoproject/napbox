@@ -19,12 +19,18 @@ extension Daemon {
             files, environment: params.environment, profiles: params.profiles,
             run: ComposeRun(service: params.service, command: params.command, noDeps: params.noDeps)
         )
-        let foreground = ForegroundService(service: params.service, stdin: stdin, output: output)
-        // 起不来时 launch 已经把它销毁了
-        let name = try await startInWorktree(
-            location, temporary: TemporaryEnvironment.generatedName(), project: project, egress: params.egress,
-            rebuild: params.build, foreground: foreground
-        ).name
+        let callerGone = CallerGone()
+        let foreground = ForegroundService(service: params.service, stdin: stdin, output: output, callerGone: callerGone)
+        // 起环境排在队列里，不随命令行断开取消；断开时做个记号，构建、拉镜像完了看到就不再往下起。
+        // 起不来时 launch 已经把它销毁了；还没登记就停下的，构建出来的镜像由 start 删掉
+        let name = try await withTaskCancellationHandler { () async throws(NapboxError) -> String in
+            try await startInWorktree(
+                location, temporary: TemporaryEnvironment.generatedName(), project: project, egress: params.egress,
+                rebuild: params.build, foreground: foreground
+            ).name
+        } onCancel: {
+            callerGone.mark()
+        }
 
         // 跑的期间占住环境：没有连接往来也不算闲置
         activity.hold(name)

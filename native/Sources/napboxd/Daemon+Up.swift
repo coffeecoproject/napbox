@@ -131,6 +131,7 @@ extension Daemon {
             try runtime.checkHostMounts(project)
             rebuilt = try await buildImages(name, project: project, force: rebuild)
             if rebuild { sessions[name]?.watchBuildError = nil }
+            try Self.checkCaller(foreground)
         } catch {
             await preparationFailed(name, project: project, startedAt: startedAt, error: error)
             throw error
@@ -144,7 +145,7 @@ extension Daemon {
         }
         let record: EnvironmentRecord
         do {
-            record = try await prepare(name, project: project, egress: egress, newRecord: newRecord)
+            record = try await prepare(name, project: project, egress: egress, foreground: foreground, newRecord: newRecord)
         } catch {
             await preparationFailed(name, project: project, startedAt: startedAt, error: error)
             throw error
@@ -169,6 +170,13 @@ extension Daemon {
         try await launch(record, project: project, skipping: Set(record.completedServices), purpose: purpose)
     }
 
+    /// napbox run 的命令行已经断开（或超时）：环境还没登记、没起虚拟机，不再往下起
+    private static func checkCaller(_ foreground: ForegroundService?) throws(NapboxError) {
+        if foreground?.callerGone.isGone == true {
+            throw NapboxError(.serviceFailed, "命令行已经断开（或超时），不再起这个临时环境")
+        }
+    }
+
     /// 全新的环境还没登记，没有地方放运行记录，也还没有人订阅它的状态：只靠这次调用返回的错误
     private func preparationFailed(_ name: String, project: ComposeProject, startedAt: Date, error: NapboxError) async {
         guard let registered = store.state.environment(name) else { return }
@@ -185,7 +193,7 @@ extension Daemon {
     /// 起环境之前的准备：拉镜像并查镜像和 compose 合起来成不成立、分配地址和端口，把新定义写进登记。全程不碰在跑的环境。
     /// 从分配地址到写登记之间不能有等待：别的名字的环境不在同一个队列里，它们看不到还没登记的地址和端口，
     /// 会分到同一个。
-    private func prepare(_ name: String, project: ComposeProject, egress: EgressMode?,
+    private func prepare(_ name: String, project: ComposeProject, egress: EgressMode?, foreground: ForegroundService?,
                          newRecord: (NapboxState) -> EnvironmentRecord) async throws(NapboxError) -> EnvironmentRecord {
         // 这段可能很久，也取消不了，napboxd 退出时不等它（shutdown）；等完了再看要不要继续
         preparing.insert(name)
@@ -194,6 +202,7 @@ extension Daemon {
         let requests = project.portRequests
         let neighbors = await Blocking.run { NetworkNeighbors.addresses() }
         if shuttingDown { throw Self.exiting }
+        try Self.checkCaller(foreground)
         let ip = try AddressAllocator.allocate(environment: name, state: store.state, inUseOnNetwork: neighbors)
         let ports = try PortAllocator.assign(requests, environment: name, state: store.state, locks: locks)
         return try store.update { (state: inout NapboxState) throws(NapboxError) -> EnvironmentRecord in
@@ -322,20 +331,36 @@ extension Daemon {
         await stopRunning(name)
         let startedAt = Date()
         let cleared: EnvironmentRecord
-        do {
-            _ = try runtime.recycleVolume(record, volume: volume, reason: "napbox reset \(volume)")
-            cleared = try store.update { (state: inout NapboxState) throws(NapboxError) -> EnvironmentRecord in
-                guard let i = state.environments.firstIndex(where: { $0.name == name }) else {
-                    throw NapboxError(.environmentNotFound, "环境 \(name) 没有登记")
-                }
-                state.environments[i].completedServices = []
-                return state.environments[i]
-            }
+        do throws(NapboxError) {
+            // 先记上再移卷：卷移走了、一次性服务的记录还没清时 napboxd 被杀，下次启动接着做完（finishPendingOperations），
+            // 不会带着“已经初始化过”的记录在空卷上起来
+            try setPending(name, .resetVolume(volume))
+            cleared = try finishReset(record, volume: volume)
         } catch {
             await startFailed(record, project: project, purpose: .reset, startedAt: startedAt, error: error)
             throw error
         }
         try await launch(cleared, project: project, skipping: [], purpose: .reset)
         return info(store.state.environment(name)!)
+    }
+
+    /// reset 的后半段：环境已经停了、登记里已经记上“重置卷”。移走卷，再一次写进状态文件：
+    /// 清掉已跑完的一次性服务（下次起来重新初始化）、去掉记号。卷已经移走了（上次做到一半）就跳过移动。
+    /// 移不走卷时去掉记号（什么都没变）；卷移走了、写状态文件失败时记号留着，下次启动接着做完。
+    func finishReset(_ record: EnvironmentRecord, volume: String) throws(NapboxError) -> EnvironmentRecord {
+        do {
+            _ = try runtime.recycleVolume(record, volume: volume, reason: "napbox reset \(volume)")
+        } catch {
+            try? setPending(record.name, nil)
+            throw error
+        }
+        return try store.update { (state: inout NapboxState) throws(NapboxError) -> EnvironmentRecord in
+            guard let i = state.environments.firstIndex(where: { $0.name == record.name }) else {
+                throw NapboxError(.environmentNotFound, "环境 \(record.name) 没有登记")
+            }
+            state.environments[i].completedServices = []
+            state.environments[i].pending = nil
+            return state.environments[i]
+        }
     }
 }

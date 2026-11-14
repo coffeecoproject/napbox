@@ -341,6 +341,20 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     });
   }
 
+  test("exec：超时后整个进程组结束，确认结束了才返回 timedOut", async () => {
+    for (const [form, command] of Object.entries(execForms)) {
+      const marker = newMarker();
+      const started = Date.now();
+      const result = await client.exec({ target, service: "app", command: command(marker), timeoutSeconds: 2, onOutput: () => {} });
+      assert.deepEqual([result.timedOut, result.exitCode], [true, 137], form);
+      assert.ok(Date.now() - started >= 2_000, `${form}：到了时限才结束`);
+      // 同一个进程组一起收到 SIGKILL：组长的退出确认了，别的也就在结束了
+      await waitUntil(`${form}：超时后命令都结束了`, async () => !(await alive(marker)), 1_000);
+    }
+    const quick = await client.exec({ target, service: "app", command: ["true"], timeoutSeconds: 30, onOutput: () => {} });
+    assert.deepEqual([quick.exitCode, quick.timedOut], [0, undefined], "没超时不带 timedOut");
+  });
+
   test("exec：命令刚启动就取消，也不留下进程", async () => {
     for (const ms of [0, 2, 5, 10, 20, 50]) {
       for (const [form, command] of Object.entries(execForms)) {

@@ -104,7 +104,12 @@ export interface ExecOptions {
   /** 给命令的标准输入，不写时命令一读就是结束。内容给完才告诉命令输入结束 */
   stdin?: string | Uint8Array | AsyncIterable<Uint8Array | string>;
   onOutput: OnOutput;
-  /** 取消时结束容器里的这条命令和它的子进程；自己用 setsid 脱离的进程等环境停止时才结束 */
+  /**
+   * 最多跑多久，从命令开始跑算起（休眠时先唤醒，唤醒的时间不算），不写是一直等。到时 napboxd 结束这条命令和它的子进程，
+   * 确认结束了才返回，结果带 timedOut；没能确认结束时抛 service_failed
+   */
+  timeoutSeconds?: number;
+  /** 取消时结束容器里的这条命令和它的子进程（不等确认）；自己用 setsid 脱离的进程等环境停止时才结束 */
   signal?: AbortSignal;
 }
 
@@ -228,10 +233,10 @@ export class NapboxClient {
 
   /** 结果里的 exitCode 和命令的退出码一样；命令失败不算出错，不抛 */
   exec(options: ExecOptions): Promise<ExecResult> {
-    const { target, service, command, stdin, onOutput, signal } = options;
+    const { target, service, command, timeoutSeconds, stdin, onOutput, signal } = options;
     return this.exchange({
       method: methods.exec,
-      params: { target, service, command },
+      params: { target, service, command, timeoutSeconds },
       result: ExecResult,
       onOutput,
       afterRequest: (write) => sendStdin(stdin, write),

@@ -169,8 +169,11 @@ export const ExecParams = z.object({
   target: EnvironmentTarget,
   service: z.string(),
   command: z.array(z.string()),
+  /** 最多跑多久，从命令开始跑算起（唤醒的时间不算）；不写是一直等。到时 napboxd 结束命令和它的子进程，确认结束了才返回（timedOut） */
+  timeoutSeconds: z.int().positive().optional(),
 });
-export const ExecResult = z.object({ exitCode: z.int() });
+/** timedOut：到了 timeoutSeconds 被结束的，exitCode 是结束后的退出码（一般是 137） */
+export const ExecResult = z.object({ exitCode: z.int(), timedOut: z.literal(true).optional() });
 
 export const ServiceRun = z.object({
   service: z.string(),

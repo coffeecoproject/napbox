@@ -94,6 +94,16 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     public var egress: EgressMode
     /// 临时环境的名字；nil 是普通环境。临时环境不休眠，停下来就直接销毁
     public var temporary: String?
+    /// 开始了还没做完的操作：动数据之前记上，做完一起去掉。napboxd 中途被杀时，下次启动先把它做完再开始监听
+    public var pending: PendingOperation?
+
+    /// 要分几步、中途停下会留下半截状态的操作
+    public enum PendingOperation: Codable, Equatable, Sendable {
+        /// 回收（down、worktree 删掉、临时环境销毁）：数据移走（或删掉）以后还要放端口、删登记
+        case recycle(reason: String, discardData: Bool)
+        /// reset 一个数据卷：卷移走以后还要清掉已跑完的一次性服务，下次起来重新初始化
+        case resetVolume(String)
+    }
 
     public init(name: String, project: String?, mainRepository: String?, worktree: String, owner: Owner, ports: [PortAssignment] = [],
                 ip: String? = nil, definition: ComposeProject? = nil, completedServices: [String] = [], egress: EgressMode = .open,

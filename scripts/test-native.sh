@@ -153,6 +153,44 @@ check "不是目录的不管" sh -c "test -f '$recycled/.DS_Store' && ! grep -q 
 kill -TERM "$s3"; wait_exit "$s3"
 rm -rf "$state" "$recycled"
 
+echo "上次没做完的回收和 reset：启动时接着做完"
+# 伪造 napboxd 做到一半被杀后的状态：登记里带着没做完的操作
+id_of() { # 和 EnvironmentRecord.id 一样的算法：环境名的 FNV-1a 64 位哈希
+    python3 -I -c 'import sys
+h = 14695981039346656037
+for b in sys.argv[1].encode(): h = ((h ^ b) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+print(format(h, "x"))' "$1"
+}
+envs="$NAPBOX_SUPPORT_DIR/environments"
+main_id="$(id_of demo/main)"; half_id="$(id_of codeos/half)"; logs="$NAPBOX_SUPPORT_DIR/builder/logs"
+mkdir -p "$envs/$main_id/volumes" "$envs/$half_id/volumes" "$logs/$main_id" "$logs/0123abcd"
+echo pg >"$envs/$main_id/volumes/pg.ext4"; echo kept >"$envs/$main_id/volumes/other.ext4"; echo data >"$envs/$half_id/volumes/db.ext4"
+cat >"$state" <<JSON
+{"version":1,"environments":[
+ {"name":"demo/main","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":["migrate"],"egress":"open","ports":[],
+  "pending":{"resetVolume":{"_0":"pg"}}},
+ {"name":"codeos/half","worktree":"$work/half","owner":{"caller":{"id":"codeos"}},"completedServices":["migrate"],"egress":"open",
+  "ports":[{"service":"db","containerPort":5432,"hostPort":38451}],"pending":{"recycle":{"reason":"codeos 销毁","discardData":false}}},
+ {"name":"codeos/moved","worktree":"$work/moved","owner":{"caller":{"id":"codeos"}},"completedServices":[],"egress":"open",
+  "ports":[{"service":"db","containerPort":5432,"hostPort":38452}],"pending":{"recycle":{"reason":"codeos 销毁","discardData":true}}}]}
+JSON
+start_daemon "$work/s5.log"; s5=$started
+wait_socket
+check "回收做完：登记里只剩 reset 的那个" test "$(jq -c '[.environments[].name]' "$state")" = '["demo/main"]'
+check "回收的数据移进 recycled，带 recycled.json" sh -c "f=\$(ls -d '$recycled/$half_id'-* | head -1) && test -f \"\$f/volumes/db.ext4\" -a -f \"\$f/recycled.json\""
+check "环境目录不在原处了" test ! -e "$envs/$half_id"
+check "回收的环境的端口放开了" port_free 38451
+check "数据已经移走的那个也做完、端口放开了" port_free 38452
+check "日志说明接着回收" grep -q "codeos/half 上次回收没做完（codeos 销毁），接着做" "$work/s5.log"
+check "reset 做完：卷移进 recycled，带 recycled.json" sh -c "f=\$(ls -d '$recycled/$main_id'-*-pg) && test -f \"\$f/volumes/pg.ext4\" -a -f \"\$f/recycled.json\""
+check "reset 做完：别的卷不动" test -f "$envs/$main_id/volumes/other.ext4"
+check "reset 做完：一次性服务重新初始化、记号去掉" test "$(jq -c '.environments[0] | [.completedServices, .pending]' "$state")" = '[[],null]'
+check "登记着的环境的构建日志不动" sh -c "test -d '$logs/$main_id' && ! grep -q '$main_id 没有登记' '$work/s5.log'"
+# 这份 napboxd 没有内核，查不了镜像：日志说明，构建日志留着下次再试
+check "没登记的环境留下的构建结果：查不了镜像时留着、日志说明" sh -c "test -d '$logs/0123abcd' && grep -q '0123abcd 没有登记，它留下的构建结果删不掉' '$work/s5.log'"
+kill -TERM "$s5"; wait_exit "$s5"
+rm -rf "$state" "$recycled" "$envs" "$NAPBOX_SUPPORT_DIR/builder"
+
 echo "调用方持有的环境（不起虚拟机）"
 # 和 CodeOS 的 Goal 副本一样：独立的 git 仓库，目录叫 repo
 # 登记里写 napboxd 自己算出来的路径：resolvingSymlinksInPath 会把 /private/var 变成 /var（pwd -P 不会）

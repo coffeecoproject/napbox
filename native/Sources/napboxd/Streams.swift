@@ -87,8 +87,9 @@ enum Streams {
         guard !params.command.isEmpty else { throw NapboxError(.badRequest, "exec 要给出命令：napbox exec <服务> -- <命令>") }
         let (name, env) = try await daemon.execTarget(params.target, service: params.service)
         defer { daemon.release(name) }
+        if let t = params.timeoutSeconds, t <= 0 { throw NapboxError(.badRequest, "timeoutSeconds 要大于 0") }
         return try await attached(id, input, output) { (stdin, buffer) throws(NapboxError) in
-            try await env.exec(params.service, params.command, stdin: stdin, output: buffer)
+            try await env.exec(params.service, params.command, stdin: stdin, timeout: params.timeoutSeconds.map(Int64.init), output: buffer)
         }
     }
 
@@ -99,15 +100,15 @@ enum Streams {
                             _ output: Output) async throws(NapboxError) -> ExecResult {
         guard !params.service.isEmpty else { throw NapboxError(.badRequest, "run 要给出服务名：napbox run <服务>") }
         return try await attached(id, input, output) { (stdin, buffer) throws(NapboxError) in
-            try await daemon.run(params, stdin: stdin, output: buffer)
+            ExecResult(exitCode: try await daemon.run(params, stdin: stdin, output: buffer))
         }
     }
 
-    /// exec、run 共用：把命令行接到一条在跑的命令上，等它结束，返回退出码。
+    /// exec、run 共用：把命令行接到一条在跑的命令上，等它结束，返回结果。
     /// - body：跑那条命令。拿到的是命令行转过来的标准输入和放输出的缓冲；命令行断开时它所在的任务被取消
     private static func attached(
         _ id: Int, _ input: AsyncStream<Data>, _ output: Output,
-        _ body: @escaping @Sendable (AsyncStream<Data>, ExecOutput) async throws(NapboxError) -> Int32
+        _ body: @escaping @Sendable (AsyncStream<Data>, ExecOutput) async throws(NapboxError) -> ExecResult
     ) async throws(NapboxError) -> ExecResult {
         // 命令的输出排进有上限的缓冲，由一个任务发给命令行。命令行读得慢时发送就慢，缓冲满了命令就等着
         let buffer = ExecOutput()
@@ -118,7 +119,7 @@ enum Streams {
             }
         }
         let (stdin, feed) = AsyncStream.makeStream(of: Data.self)
-        let run = Task { () async -> Result<Int32, NapboxError> in
+        let run = Task { () async -> Result<ExecResult, NapboxError> in
             do throws(NapboxError) {
                 return .success(try await body(stdin, buffer))
             } catch {
@@ -139,7 +140,7 @@ enum Streams {
         let result = await run.value
         buffer.close()
         await sender.value
-        return ExecResult(exitCode: try result.get())
+        return try result.get()
     }
 
     // MARK: - subscribe

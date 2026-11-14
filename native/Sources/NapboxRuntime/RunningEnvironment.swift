@@ -63,6 +63,8 @@ public actor RunningEnvironment {
     private var vmLostHandler: VMLostHandler?
     private var vmLost = false
     private var vmWatcher: Task<Void, Never>?
+    /// 这个环境的虚拟机，起来时拿一次。停不下来时直接关它：那时 pod 的锁可能被卡住的请求占着，再去 pod 里拿会跟着卡住
+    private var vm: (any VirtualMachineInstance)?
     /// 当前的出网模式，和 open 模式下挡住的宿主机地址
     private var egress: EgressMode = .open
     private var blockedHostAddresses: [String] = []
@@ -140,11 +142,34 @@ public actor RunningEnvironment {
     ///    下次挂载后写不进去（2026-11-07 实测碰到）
     /// 3. pod.stop()：还没退出的强制结束，停掉虚拟机
     /// 虚拟机已经没了时跳过前两步：里面什么都不会回应，不用白等 stop_grace_period。
+    /// 这几步里发给虚拟机的请求（结束进程、卸载、删进程）框架都不设时限，虚拟机里卡住时会一直等，
+    /// 这个环境之后的操作跟着排队。所以整个过程有总时限（stopTimeLimit），到时直接关掉虚拟机：
+    /// 卡住的请求随之失败返回，pod.stop() 也就结束了。相当于断电，靠磁盘的日志恢复（第 2 节「napboxd 被强杀后的磁盘」）。
     public func stop() async {
         stopping = true
         vmWatcher?.cancel()
         sourceStream?.stop()
         await sourceForwarder?.close()
+        let id = pod.id, vm = vm
+        let limit = stopTimeLimit
+        await Deadline.run(seconds: limit, onTimeout: {
+            print("环境 \(id) 停了 \(Int(limit)) 秒还没停下，直接关掉虚拟机")
+            try? await vm?.stop()
+        }) {
+            await stopInside()
+        }
+        for w in watchers { w.cancel() }
+        for log in logs.values { log.close() }
+    }
+
+    /// 正常情况下停完要多久的上限：每层服务里最长的 stop_grace_period 加起来、存盘的 10 秒、
+    /// pod.stop() 给每个容器的 3 秒，再多给 30 秒
+    private var stopTimeLimit: Double {
+        let grace = stopLayers.map { layer in layer.map { gracePeriods[$0] ?? Self.defaultGracePeriod }.max() ?? 0 }.reduce(0, +)
+        return grace + 10 + 3 * Double(logs.count + 2) + 30
+    }
+
+    private func stopInside() async {
         if await vmState() == .running {
             for layer in stopLayers {
                 let names = layer.filter { started.contains($0) && exits[$0] == nil }
@@ -161,9 +186,7 @@ public actor RunningEnvironment {
             }
             _ = await exec(GuardContainer.name, [GuardContainer.program, "sync"], timeout: 10)
         }
-        for w in watchers { w.cancel() }
         try? await pod.stop()
-        for log in logs.values { log.close() }
     }
 
     // MARK: - 启动
@@ -177,6 +200,7 @@ public actor RunningEnvironment {
     /// - progress：每个服务就绪时告诉它（跳过的一次性服务一开始就算就绪）
     func startAll(_ project: ComposeProject, skipping: Set<String>, foreground: String? = nil, egress: EgressMode,
                   trace: RunTrace, progress: StartProgress) async throws(NapboxError) {
+        vm = try? await pod.withVirtualMachineInstance { $0 }
         watchVM()
         self.project = project
         for name in skipping {
@@ -348,8 +372,10 @@ public actor RunningEnvironment {
     /// - stdin：命令的标准输入，结束时关掉命令的标准输入
     /// - output：输出按顺序排进去，积压到上限时命令等着（ExecOutput）。正常结束时收完了才返回，不关 output
     /// 调用它的任务被取消时（命令行断开了）结束这条命令和它的子进程（killGroup）。
-    public func exec(_ service: String, _ argv: [String], stdin: AsyncStream<Data>,
-                     output: ExecOutput) async throws(NapboxError) -> Int32 {
+    /// - timeout：到时同样结束整个进程组，再等最多 killWaitSeconds 确认它结束了，返回 timedOut；
+    ///   还没结束（结束信号没送到、虚拟机里卡住了）就报错说明，不当成已经结束
+    public func exec(_ service: String, _ argv: [String], stdin: AsyncStream<Data>, timeout: Int64?,
+                     output: ExecOutput) async throws(NapboxError) -> ExecResult {
         guard started.contains(service) else {
             throw NapboxError(.serviceFailed, "\(service) 这次没有启动（已经跑完的一次性服务唤醒时不再启动），没法在里面执行命令")
         }
@@ -377,15 +403,32 @@ public actor RunningEnvironment {
             try? await process.delete()
             throw NapboxError(.serviceFailed, "在 \(service) 里执行 \(argv.joined(separator: " ")) 失败：\(error)")
         }
-        let waiting = Task { try await process.wait() } // 等到输出都转完才返回
+        // 等到输出都转完才返回
+        let waiting = Task { () async throws -> (ExitStatus, timedOut: Bool) in
+            do {
+                return (try await process.wait(timeoutInSeconds: timeout), false)
+            } catch let error as ContainerizationError where error.isCode(.timeout) {
+                output.close() // 输出堵着的话命令结束不了
+                Task { await self.killGroup(process) }
+                do {
+                    return (try await process.wait(timeoutInSeconds: Self.killWaitSeconds), true)
+                } catch let error as ContainerizationError where error.isCode(.timeout) {
+                    throw NapboxError(.serviceFailed, "命令跑了 \(timeout ?? 0) 秒还没结束，发了结束信号，又等了 \(Self.killWaitSeconds) 秒还没退出，"
+                                      + "可能还在跑（虚拟机里可能卡住了，napboxd 日志里有没有结束失败的记录）；要停下它可以 sleep 或 down 这个环境")
+                }
+            }
+        }
         let status: ExitStatus
+        let timedOut: Bool
         do {
-            status = try await withTaskCancellationHandler {
+            (status, timedOut) = try await withTaskCancellationHandler {
                 try await waiting.value
             } onCancel: {
                 output.close() // 被堵住的写入方要放开，命令才结束得了
                 Task { await self.killGroup(process) }
             }
+        } catch let error as NapboxError {
+            throw error // 超时后没能确认结束：不删进程，它可能还在
         } catch {
             output.close()
             try? await process.delete()
@@ -394,8 +437,11 @@ public actor RunningEnvironment {
         await output.waitForUnread() // delete 会关掉输出的连接
         output.close()
         try? await process.delete()
-        return status.exitCode
+        return ExecResult(exitCode: status.exitCode, timedOut: timedOut ? true : nil)
     }
+
+    /// exec 超时、发了结束信号后，最多再等这么久确认命令结束了
+    static let killWaitSeconds: Int64 = 10
 
     // MARK: - develop.watch 的同步
 
@@ -852,10 +898,14 @@ public actor RunningEnvironment {
     /// 子进程默认同组；process.kill 只发给组长，子进程会变成孤儿留下。
     /// 用 setsid 自己脱离出去的进程不在这个组里，留到环境停止时随虚拟机结束。
     private nonisolated func killGroup(_ process: LinuxProcess) async {
-        try? await pod.withVirtualMachineInstance { vm in
-            let agent = try await vm.dialAgent()
-            _ = try? await agent.kill(pid: -process.pid, signal: Signal.kill.rawValue)
-            try? await agent.close()
+        do {
+            try await pod.withVirtualMachineInstance { vm in
+                let agent = try await vm.dialAgent()
+                defer { Task { try? await agent.close() } }
+                _ = try await agent.kill(pid: -process.pid, signal: Signal.kill.rawValue)
+            }
+        } catch {
+            print("环境 \(pod.id)：结束命令（进程组 \(process.pid)）失败：\(error)")
         }
     }
 

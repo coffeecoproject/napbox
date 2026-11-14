@@ -146,18 +146,40 @@ public actor Runtime {
     /// 环境回收时删掉它构建出来的镜像和构建日志。要再用时重新构建，有缓存，不用从头来。
     /// 按环境名找：临时环境第一次起就失败时还没有登记，构建出来的也要删。
     public func removeBuiltImages(environment name: String) async throws(NapboxError) {
-        let id = EnvironmentRecord.id(of: name)
-        try? FileManager.default.removeItem(at: storage.buildLogs(environment: id))
+        try await removeBuilds(id: EnvironmentRecord.id(of: name))
+    }
+
+    /// napboxd 启动时：登记里没有的环境留下的构建结果和构建日志都删掉（构建到一半 napboxd 被杀、
+    /// 第一次起环境没起来）。按构建日志找：每次构建都会先写日志，镜像要构建完才有。返回要记进日志的话。
+    public func removeLeftoverBuilds(keeping ids: Set<String>) async -> [String] {
+        let logs = storage.root.appending(path: "builder/logs")
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: logs.path) else { return [] }
+        var messages: [String] = []
+        for id in entries.sorted() where !ids.contains(id) && !id.hasPrefix(".") {
+            do {
+                try await removeBuilds(id: id)
+                messages.append("环境 \(id) 没有登记，删掉它留下的构建结果")
+            } catch {
+                messages.append("环境 \(id) 没有登记，它留下的构建结果删不掉，下次启动再试：\(error.message)")
+            }
+        }
+        return messages
+    }
+
+    /// 镜像删成了才删构建日志：日志是找到这些镜像的线索，镜像删不掉时留着，下次还能再找
+    private func removeBuilds(id: String) async throws(NapboxError) {
         let (store, _) = try await prepare()
         let prefix = Images.builtPrefix(environment: id)
         do {
             let built = try await store.list().filter { $0.reference.hasPrefix(prefix) }
-            guard !built.isEmpty else { return }
-            for image in built { try await store.delete(reference: image.reference) }
-            try await store.cleanUpOrphanedBlobs()
+            if !built.isEmpty {
+                for image in built { try await store.delete(reference: image.reference) }
+                try await store.cleanUpOrphanedBlobs()
+            }
         } catch {
             throw NapboxError(.internalError, "\(error)")
         }
+        try? FileManager.default.removeItem(at: storage.buildLogs(environment: id))
     }
 
     /// 起一个环境：准备镜像、根文件系统、数据卷，创建 pod，按依赖顺序启动，等全部就绪。

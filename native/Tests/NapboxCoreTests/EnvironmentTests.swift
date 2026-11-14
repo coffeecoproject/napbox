@@ -151,6 +151,19 @@ import NapboxProtocol
         #expect(try JSONDecoder().decode(EnvironmentRecord.self, from: Data(json.utf8)) == plain)
     }
 
+    /// 没做完的操作记在 state.json 里，napboxd 重启后读得回来；没有这一项时是 nil
+    @Test func pendingOperationRoundTrips() throws {
+        var r = record("pawcode/main", project: "pawcode", repo: "/a/Pawcode", worktree: "/a/Pawcode")
+        #expect(!String(decoding: try JSONEncoder().encode(r), as: UTF8.self).contains("pending"))
+        for pending: EnvironmentRecord.PendingOperation in [.recycle(reason: "napbox down", discardData: true), .resetVolume("db")] {
+            r.pending = pending
+            #expect(try JSONDecoder().decode(EnvironmentRecord.self, from: try JSONEncoder().encode(r)) == r)
+        }
+        // test-native.sh 伪造 state.json 时照这个写法
+        let reset = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(r)) as? [String: Any]
+        #expect((reset?["pending"] as? [String: [String: String]]) == ["resetVolume": ["_0": "db"]])
+    }
+
     @Test func storeRoundTripAndCorruption() throws {
         try withProject(["x": ""]) { dir in
             let url = dir.appending(path: "state.json")

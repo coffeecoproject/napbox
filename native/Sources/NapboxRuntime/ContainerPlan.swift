@@ -12,11 +12,14 @@ public struct ForegroundService: Sendable {
     public let stdin: AsyncStream<Data>
     /// 积压到上限时服务等着（ExecOutput）
     public let output: ExecOutput
+    /// 命令行断开了（或超时）：还在准备镜像时就不再往下起
+    public let callerGone: CallerGone
 
-    public init(service: String, stdin: AsyncStream<Data>, output: ExecOutput) {
+    public init(service: String, stdin: AsyncStream<Data>, output: ExecOutput, callerGone: CallerGone) {
         self.service = service
         self.stdin = stdin
         self.output = output
+        self.callerGone = callerGone
     }
 }
 

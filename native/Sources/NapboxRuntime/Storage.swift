@@ -55,18 +55,37 @@ struct Storage: Sendable {
 
     /// 调用方要求不保留数据：环境目录先整个移到 recycled/<环境 ID>-<时间>/data（一步改名，不会删到一半还登记着），
     /// 再删掉。删失败时还在 recycled 里，旁边的 recycled.json 先不动，照常 7 天后删，返回那个目录；删掉了返回 nil。
+    /// 这个环境以前 discard 时移进 recycled、没删完的（删到一半 napboxd 被杀、或者当时删不掉）也一起删：
+    /// napboxd 重启后接着做 discard 时，数据已经不在原位，只剩这些。
     func discardEnvironment(_ record: EnvironmentRecord, reason: String) throws(NapboxError) -> URL? {
-        guard let target = try moveToRecycled(environmentDirectory(record), keptAt: "data", record: record, label: nil,
-                                              reason: reason) else { return nil }
-        do {
-            try FileManager.default.removeItem(at: target.appending(path: "data"))
-        } catch {
-            print("删 \(target.path) 失败，留在 recycled 里 7 天后再删：\(error.localizedDescription)")
-            return target
+        let moved = try moveToRecycled(environmentDirectory(record), keptAt: "data", record: record, label: nil, reason: reason)
+        var kept: URL?
+        let earlier = undeletedDiscards(record).filter { $0.lastPathComponent != moved?.lastPathComponent }
+        for target in (moved.map { [$0] } ?? []) + earlier {
+            do {
+                try FileManager.default.removeItem(at: target.appending(path: "data"))
+            } catch {
+                print("删 \(target.path) 失败，留在 recycled 里 7 天后再删：\(error.localizedDescription)")
+                kept = kept ?? target
+                continue
+            }
+            // 只剩 recycled.json，删不掉也只是一个小文件，到期照样删
+            try? FileManager.default.removeItem(at: target)
         }
-        // 只剩 recycled.json，删不掉也只是一个小文件，到期照样删
-        try? FileManager.default.removeItem(at: target)
-        return nil
+        return kept
+    }
+
+    /// recycled 里这个环境 discard 时留下的：recycled/<环境 ID>-<时间>/data，recycled.json 记的是这个环境名。
+    /// 只有 discard 是这种结构（down 回收的是环境目录本身，reset 的是 volumes/<卷>.ext4）
+    private func undeletedDiscards(_ record: EnvironmentRecord) -> [URL] {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(at: recycledRoot, includingPropertiesForKeys: nil) else { return [] }
+        return entries.filter { dir in
+            guard dir.lastPathComponent.hasPrefix("\(record.id)-"), fm.fileExists(atPath: dir.appending(path: "data").path),
+                  let data = fm.contents(atPath: dir.appending(path: RecycledInfo.fileName).path),
+                  let info = try? DiskJSON.decoder.decode(RecycledInfo.self, from: data) else { return false }
+            return info.name == record.name
+        }.sorted { $0.path < $1.path }
     }
 
     /// 临时环境销毁：整个环境目录直接删掉，不保留。
@@ -89,18 +108,35 @@ struct Storage: Sendable {
 
     /// 移到 recycled/<环境 ID>-<时间>[-<label>]/（keptAt 不是 nil 时放在这个目录下的 keptAt），
     /// 旁边写一份 recycled.json 记下是哪个环境、什么时候、为什么回收的；到期由 purgeRecycled 删掉。
+    /// recycled.json 先写好，数据最后一步改名移过去：不会有移过去了却没有 recycled.json、永远清不掉的目录。
+    /// 改名之前停下（失败或 napboxd 被杀），数据还在原位；只多一个只有 recycled.json 的目录，到期照常删。
     private func moveToRecycled(_ source: URL, keptAt relative: String?, record: EnvironmentRecord, label: String?,
                                 reason: String) throws(NapboxError) -> URL? {
-        guard FileManager.default.fileExists(atPath: source.path) else { return nil }
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: source.path) else { return nil }
         let now = Date()
         let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "")
         let target = recycledRoot.appending(path: [record.id, stamp, label].compactMap(\.self).joined(separator: "-"))
-        let destination = relative.map { target.appending(path: $0) } ?? target
+        let info = RecycledInfo(name: record.name, worktree: record.worktree, recycledAt: now, reason: reason)
         do {
-            try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.moveItem(at: source, to: destination)
-            let info = RecycledInfo(name: record.name, worktree: record.worktree, recycledAt: now, reason: reason)
-            try DiskJSON.encoder.encode(info).write(to: target.appending(path: RecycledInfo.fileName))
+            let data = try DiskJSON.encoder.encode(info)
+            if let relative {
+                let destination = target.appending(path: relative)
+                try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: target.appending(path: RecycledInfo.fileName))
+                try fm.moveItem(at: source, to: destination)
+            } else {
+                // 整个目录移过去就是 target：recycled.json 先放进要移的目录里
+                try fm.createDirectory(at: recycledRoot, withIntermediateDirectories: true)
+                let file = source.appending(path: RecycledInfo.fileName)
+                try data.write(to: file)
+                do {
+                    try fm.moveItem(at: source, to: target)
+                } catch {
+                    try? fm.removeItem(at: file) // 还在原位的环境目录里不留它
+                    throw error
+                }
+            }
         } catch {
             throw NapboxError(.internalError, "移走 \(source.path) 失败：\(error.localizedDescription)")
         }
