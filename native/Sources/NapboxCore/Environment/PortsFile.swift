@@ -13,22 +13,30 @@ public enum PortsFile {
             var variable: String
         }
 
+        struct HostPort: Codable, Equatable {
+            var name: String
+            var hostPort: Int
+            var variable: String
+        }
+
         var environment: String
         var ports: [Port]
+        var hostPorts: [HostPort]
         var variables: [String: String]
 
-        init(environment: String, assignments: [PortAssignment]) {
+        init(environment: String, assignments: [PortAssignment], hostAssignments: [HostPortAssignment]) {
             self.environment = environment
             ports = assignments.map { Port(service: $0.service, containerPort: $0.containerPort, hostPort: $0.hostPort, variable: PortVariables.name(of: $0)) }
-            variables = PortVariables.variables(assignments)
+            hostPorts = hostAssignments.map { HostPort(name: $0.name, hostPort: $0.hostPort, variable: HostPortVariables.name(of: $0)) }
+            variables = PortVariables.all(assignments, hostPorts: hostAssignments)
         }
     }
 
-    public static func write(environment: String, ports: [PortAssignment], worktree: URL) throws(NapboxError) {
+    public static func write(environment: String, ports: [PortAssignment], hostPorts: [HostPortAssignment], worktree: URL) throws(NapboxError) {
         let dir = worktree.appending(path: ".napbox")
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let data = try DiskJSON.encoder.encode(Content(environment: environment, assignments: ports))
+            let data = try DiskJSON.encoder.encode(Content(environment: environment, assignments: ports, hostAssignments: hostPorts))
             try data.write(to: dir.appending(path: "ports.json"), options: .atomic)
         } catch {
             throw NapboxError(.internalError, "写不了 \(dir.path)/ports.json：\(error.localizedDescription)")

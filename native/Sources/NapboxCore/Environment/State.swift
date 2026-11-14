@@ -84,6 +84,8 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     public var owner: Owner
     /// 分配的宿主机端口，包括没启用的 profile 里的服务留着的（definition.reservedPorts）。对外用 activePorts
     public var ports: [PortAssignment]
+    /// 本机进程的端口（definition.hostPorts 分到的），napboxd 不锁。没有是 nil
+    public var hostPorts: [HostPortAssignment]?
     /// 虚拟机在系统 NAT 网段里的固定 IP
     public var ip: String?
     /// up 时解析好的 compose，之后唤醒都用这一份，直到下次 up
@@ -125,6 +127,9 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     public var activePorts: [PortAssignment] {
         ports.filter { definition?.service($0.service)?.ports.contains($0.containerPort) == true }
     }
+
+    /// 登记的全部宿主机端口：服务的加上本机进程的。分配时不能给别的环境，down 时一起放开
+    public var allHostPorts: [Int] { ports.map(\.hostPort) + (hostPorts ?? []).map(\.hostPort) }
 
     /// 环境的数据目录名：环境名里有 `/` 和中文，目录名用一个不会变的短 ID
     public var id: String { Self.id(of: name) }

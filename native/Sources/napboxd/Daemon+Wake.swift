@@ -10,7 +10,8 @@ extension Daemon {
 
     /// 把登记的端口都锁上。napboxd 启动时被别的程序占着的这时再试：已经放开了就恢复，还占着报 port_unavailable。
     func lockPorts(_ record: EnvironmentRecord) throws(NapboxError) {
-        _ = try PortAllocator.assign(record.ports.map(\.request), environment: record.name, state: store.state, locks: locks)
+        _ = try PortAllocator.assign(record.ports.map(\.request), hostPorts: (record.hostPorts ?? []).map(\.name),
+                                     environment: record.name, state: store.state, locks: locks)
     }
 
     /// 让监听的端口和登记的一致：登记里没有的关掉，新登记的开始监听。没启用的 profile 留着的端口也监听，

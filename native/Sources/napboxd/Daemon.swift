@@ -150,10 +150,13 @@ actor Daemon {
         let ports = active.map {
             PortInfo(service: $0.service, containerPort: $0.containerPort, hostPort: $0.hostPort, variable: PortVariables.name(of: $0))
         }
+        let host = record.hostPorts ?? []
         return EnvironmentInfo(
             name: record.name, owner: record.owner.callerID, state: running[record.name] == nil ? .sleeping : .running,
             worktree: record.worktree,
-            ports: ports, egress: record.egress, variables: PortVariables.variables(active),
+            ports: ports, hostPorts: host.map { HostPortInfo(name: $0.name, hostPort: $0.hostPort, variable: HostPortVariables.name(of: $0)) },
+            egress: record.egress,
+            variables: PortVariables.all(active, hostPorts: host),
             unsetVariables: record.definition?.unsetVariables ?? [],
             lastError: sessions[record.name]?.lastFailure?.message, serviceExits: sessions[record.name]?.exits ?? [],
             watchError: sessions[record.name]?.watchError

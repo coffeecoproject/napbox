@@ -1,5 +1,6 @@
 // 端口分配和锁定：从 40000–49999 接着上次往后分配，同一个环境每次一样；
-// 分配后 napboxd 一直监听这些端口（休眠时也不放开），别的程序拿不到。
+// 服务的端口分配后 napboxd 一直监听（休眠时也不放开），别的程序拿不到。
+// 本机进程的端口（x-napbox.host_ports）从同一个范围分，napboxd 不占着，留给项目自己的进程监听。
 import Darwin
 import Foundation
 import NapboxProtocol
@@ -16,6 +17,17 @@ public struct PortAssignment: Codable, Equatable, Hashable, Sendable {
     }
 
     public var request: PortRequest { PortRequest(service: service, containerPort: containerPort) }
+}
+
+/// 本机进程的端口：x-napbox.host_ports 里的一个名字分到的宿主机端口
+public struct HostPortAssignment: Codable, Equatable, Hashable, Sendable {
+    public var name: String
+    public var hostPort: Int
+
+    public init(name: String, hostPort: Int) {
+        self.name = name
+        self.hostPort = hostPort
+    }
 }
 
 public struct PortRequest: Hashable, Sendable {
@@ -47,6 +59,36 @@ public enum PortVariables {
     /// 登记的端口对应的变量：名字 → 值
     public static func variables(_ assignments: [PortAssignment]) -> [String: String] {
         Dictionary(uniqueKeysWithValues: assignments.map { (name(of: $0), value(hostPort: $0.hostPort)) })
+    }
+
+    /// 交给调用方的全部变量：服务的端口加上本机程序的端口。两种变量名不会撞（HostPortVariables.isValidName）
+    public static func all(_ assignments: [PortAssignment], hostPorts: [HostPortAssignment]) -> [String: String] {
+        let service = assignments.map { (name(of: $0), value(hostPort: $0.hostPort)) }
+        let host = hostPorts.map { (HostPortVariables.name(of: $0), String($0.hostPort)) }
+        return Dictionary(uniqueKeysWithValues: service + host)
+    }
+}
+
+/// 本机进程的端口变量：`NAPBOX_HOST_<名字>`，值只是端口号（进程要监听它，不是去连它）。
+public enum HostPortVariables {
+    static let prefix = "NAPBOX_HOST_"
+
+    /// 名字：小写字母开头，只用小写字母、数字和下划线，不以 `_` 或 `_数字` 结尾。
+    /// 服务端口的变量 NAPBOX_<服务>_<容器端口> 一定以 `_数字` 结尾，所以两种变量名不会撞，也分得开（isVariable）
+    public static func isValidName(_ name: String) -> Bool {
+        guard let first = name.first, ("a"..."z").contains(first),
+              name.allSatisfy({ ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "_" }),
+              let last = name.split(separator: "_", omittingEmptySubsequences: false).last
+        else { return false }
+        return !last.isEmpty && !(name.contains("_") && last.allSatisfy(\.isNumber))
+    }
+
+    public static func name(of a: HostPortAssignment) -> String { prefix + a.name.uppercased() }
+
+    /// 变量名是不是本机进程端口的样子（NAPBOX_HOST_ 后面是一个合规的名字）。服务叫 host 时它的
+    /// NAPBOX_HOST_5432 以 `_数字` 结尾，不算
+    public static func isVariable(_ variable: String) -> Bool {
+        variable.hasPrefix(prefix) && isValidName(variable.dropFirst(prefix.count).lowercased())
     }
 }
 
@@ -137,12 +179,20 @@ public final class PortLocks {
     public func release(_ port: Int) {
         if let fd = sockets.removeValue(forKey: port) { close(fd) }
     }
+
+    /// 端口现在有没有被别的程序占着：判断和 lock 一样，判断完马上放开，不占着。只用于不锁的端口（本机进程的端口）
+    public func isFree(_ port: Int) -> Bool {
+        guard sockets[port] == nil, lock(port) else { return false }
+        release(port)
+        return true
+    }
 }
 
 /// 一次分配的结果。lastNew 是这次新分到的端口里最后分的那个（按查找顺序），由调用方写回登记表的
 /// `lastAssignedPort`，下次从它后面接着找；没有新分的端口时是 nil，登记表里的不动。
 public struct PortAllocation: Equatable, Sendable {
     public var ports: [PortAssignment]
+    public var hostPorts: [HostPortAssignment]
     public var lastNew: Int?
 }
 
@@ -162,12 +212,16 @@ public enum PortAllocator {
     /// 接着找而不是每次从头找：回收的环境放开的端口要轮完整个范围才会再分出去，项目和 agent 手里过期的地址
     /// （启动脚本写出的文件、记下的端口）连上去是没人监听、直接报错，不会悄悄连到别的 worktree 的服务。
     /// 出错时这次新锁的端口都放开。返回新的分配结果，由调用方写回登记表。
+    /// hostPorts 是本机进程的端口名：已经分过的沿用，不再查有没有被占（占着它的多半就是项目自己的进程）；
+    /// 新的接在服务端口后面从同一个序列里找，要求这时没人占着，分到后不锁。
     public static func assign(
-        _ requests: [PortRequest], environment: String, state: NapboxState,
+        _ requests: [PortRequest], hostPorts: [String], environment: String, state: NapboxState,
         locks: PortLocks, range: ClosedRange<Int> = range
     ) throws(NapboxError) -> PortAllocation {
-        let current = state.environment(environment)?.ports ?? []
-        let takenByOthers = Set(state.environments.filter { $0.name != environment }.flatMap { $0.ports.map(\.hostPort) })
+        let record = state.environment(environment)
+        let current = record?.ports ?? []
+        let currentHost = record?.hostPorts ?? []
+        let takenByOthers = Set(state.environments.filter { $0.name != environment }.flatMap { $0.allHostPorts })
         let wanted = Set(requests)
         var result: [PortAssignment] = []
         var newlyLocked: [Int] = []
@@ -182,32 +236,39 @@ public enum PortAllocator {
             if !wasLocked { newlyLocked.append(a.hostPort) }
             result.append(a)
         }
-        var used = takenByOthers.union(current.map(\.hostPort))
+        var used = takenByOthers.union(current.map(\.hostPort)).union(currentHost.map(\.hostPort))
         // 从上次分到的端口后面开始，绕一圈回到它为止
         let start = state.lastAssignedPort.flatMap { range.contains($0) && $0 < range.upperBound ? $0 + 1 : nil } ?? range.lowerBound
         var candidates = Array(start...range.upperBound) + Array(range.lowerBound..<start)
         candidates.reverse()
         var lastNew: Int?
-        var handled = Set(result.map(\.request))
-        for r in requests where handled.insert(r).inserted {
-            var assigned: Int?
+        /// 按顺序找下一个没登记、accept 也认可的端口；找不到时放开这次新锁的，报错
+        func next(_ accept: (Int) -> Bool) throws(NapboxError) -> Int {
             while let port = candidates.popLast() {
-                if used.contains(port) { continue }
-                if locks.lock(port) {
-                    assigned = port
-                    break
+                if !used.contains(port), accept(port) {
+                    used.insert(port)
+                    lastNew = port
+                    return port
                 }
             }
-            guard let port = assigned else {
-                rollback()
-                throw NapboxError(.portUnavailable, "\(range.lowerBound)–\(range.upperBound) 里已经没有能用的端口了")
-            }
+            rollback()
+            throw NapboxError(.portUnavailable, "\(range.lowerBound)–\(range.upperBound) 里已经没有能用的端口了")
+        }
+        var handled = Set(result.map(\.request))
+        for r in requests where handled.insert(r).inserted {
+            let port = try next(locks.lock)
             newlyLocked.append(port)
-            used.insert(port)
-            lastNew = port
             result.append(PortAssignment(service: r.service, containerPort: r.containerPort, hostPort: port))
         }
+        var hostResult: [HostPortAssignment] = []
+        for name in hostPorts {
+            if let kept = currentHost.first(where: { $0.name == name }) { hostResult.append(kept) }
+            else { hostResult.append(HostPortAssignment(name: name, hostPort: try next(locks.isFree))) }
+        }
         for a in current where !wanted.contains(a.request) { locks.release(a.hostPort) }
-        return PortAllocation(ports: result.sorted { ($0.service, $0.containerPort) < ($1.service, $1.containerPort) }, lastNew: lastNew)
+        return PortAllocation(
+            ports: result.sorted { ($0.service, $0.containerPort) < ($1.service, $1.containerPort) },
+            hostPorts: hostResult, lastNew: lastNew
+        )
     }
 }

@@ -63,7 +63,7 @@ extension Daemon {
         // ports.json 是开发环境的，临时环境不写也不删
         if record.owner == .worktree, record.temporary == nil { removePortsFile(worktree: URL(fileURLWithPath: record.worktree)) }
         events.emit(EnvironmentEvent(at: Date(), environment: record.name, owner: record.owner.callerID, type: .destroyed, reason: reason))
-        return DownResult(name: record.name, releasedPorts: record.ports.map(\.hostPort).sorted(), keptDataAt: kept?.path)
+        return DownResult(name: record.name, releasedPorts: record.allHostPorts.sorted(), keptDataAt: kept?.path)
     }
 
     /// 在登记里记上（nil 是去掉）开始了还没做完的操作

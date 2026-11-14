@@ -431,6 +431,54 @@ extension [ComposeIssue] {
         #expect(try load(["compose.yaml": "services:\n  a: {image: alpine, ports: [\"80\"]}\n"]).reservedPorts == nil)
     }
 
+    /// x-napbox.host_ports：按写的顺序留下名字；名字不合规矩、重复的报错；run 不留；没写的定义和原来一样
+    @Test func hostPorts() throws {
+        let files = ["compose.yaml": """
+        x-napbox:
+          host_ports: [server, e2e_web, worker2]
+        services:
+          db: {image: postgres, ports: ["5432"]}
+        """]
+        #expect(try load(files).hostPorts == ["server", "e2e_web", "worker2"])
+        #expect(try load(files, run: ComposeRun(service: "db")).hostPorts == nil, "run 跑完就销毁，不用留")
+        #expect(try load(["compose.yaml": "services:\n  a: {image: alpine}\n"]).hostPorts == nil)
+
+        let found = try issues(["compose.yaml": """
+        x-napbox:
+          host_ports: [Server, e2e_1, web, web]
+        services:
+          a: {image: alpine}
+        """])
+        #expect(found.count == 3)
+        #expect(found.mentions("x-napbox.host_ports.Server"))
+        #expect(found.mentions("x-napbox.host_ports.e2e_1"))
+        #expect(found.mentions("x-napbox.host_ports.web：重复了"))
+        #expect(try issues(["compose.yaml": "x-napbox: {host_ports: {a: 1}}\nservices:\n  a: {image: alpine}\n"]).mentions("x-napbox.host_ports：要是列表"))
+    }
+
+    /// 本机进程的端口变量：compose 里哪里引用都报错（环境里访问不到本机），调用方环境里有同名变量也不拿来用；
+    /// 服务叫 host 时它自己的端口变量照常
+    @Test func hostPortVariablesCannotBeReferenced() throws {
+        let files = ["compose.yaml": """
+        x-napbox: {host_ports: [server]}
+        services:
+          a:
+            image: alpine
+            command: ["echo", "${NAPBOX_HOST_SERVER}"]
+            environment: {BACKEND: "http://127.0.0.1:${NAPBOX_HOST_SERVER}"}
+        """]
+        let found = try issues(files, env: ["NAPBOX_HOST_SERVER": "41230"])
+        #expect(found.count == 2)
+        #expect(found.mentions("services.a.environment.BACKEND：NAPBOX_HOST_SERVER 是本机程序的端口"))
+        #expect(found.mentions("services.a：NAPBOX_HOST_SERVER 是本机程序的端口"))
+        let host = try load(["compose.yaml": """
+        services:
+          host: {image: postgres, ports: ["5432"]}
+          a: {image: alpine, environment: {DB: "${NAPBOX_HOST_5432}"}}
+        """])
+        #expect(host.service("a")?.environment["DB"] == PortReferences.placeholder("NAPBOX_HOST_5432"))
+    }
+
     /// napbox run：只留点名的服务和它依赖的，规则和 docker compose run 一样
     @Test func runKeepsTargetAndItsDependencies() throws {
         let files = ["compose.yaml": """

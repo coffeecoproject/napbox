@@ -175,8 +175,10 @@ public struct EnvironmentInfo: Codable, Sendable {
     /// 代码所在目录
     public var worktree: String
     public var ports: [PortInfo]
+    /// 本机进程的端口（compose 的 x-napbox.host_ports），napboxd 不占着，给项目自己的进程监听
+    public var hostPorts: [HostPortInfo]
     public var egress: EgressMode
-    /// 可以直接 export 的变量：`NAPBOX_API_3100` → `127.0.0.1:41217`
+    /// 可以直接 export 的变量：`NAPBOX_API_3100` → `127.0.0.1:41217`；本机进程的端口是 `NAPBOX_HOST_SERVER` → `41230`
     public var variables: [String: String]
     /// compose 里用到了但没设置、也没默认值的变量（按空字符串处理）
     public var unsetVariables: [String]
@@ -187,13 +189,14 @@ public struct EnvironmentInfo: Codable, Sendable {
     /// develop.watch 最近一次同步或重建失败的原因（这时跑的可能还是旧代码），下次成功后清掉
     public var watchError: String?
 
-    public init(name: String, owner: String?, state: EnvironmentState, worktree: String, ports: [PortInfo], egress: EgressMode,
+    public init(name: String, owner: String?, state: EnvironmentState, worktree: String, ports: [PortInfo], hostPorts: [HostPortInfo], egress: EgressMode,
                 variables: [String: String], unsetVariables: [String], lastError: String? = nil, serviceExits: [ServiceExit] = [], watchError: String? = nil) {
         self.name = name
         self.owner = owner
         self.state = state
         self.worktree = worktree
         self.ports = ports
+        self.hostPorts = hostPorts
         self.egress = egress
         self.variables = variables
         self.unsetVariables = unsetVariables
@@ -214,6 +217,21 @@ public struct PortInfo: Codable, Sendable {
     public init(service: String, containerPort: Int, hostPort: Int, variable: String) {
         self.service = service
         self.containerPort = containerPort
+        self.hostPort = hostPort
+        self.variable = variable
+    }
+}
+
+public struct HostPortInfo: Codable, Sendable {
+    /// x-napbox.host_ports 里写的名字
+    public var name: String
+    /// 宿主机上的端口，项目的进程自己监听
+    public var hostPort: Int
+    /// 对应的变量名，例如 NAPBOX_HOST_SERVER
+    public var variable: String
+
+    public init(name: String, hostPort: Int, variable: String) {
+        self.name = name
         self.hostPort = hostPort
         self.variable = variable
     }

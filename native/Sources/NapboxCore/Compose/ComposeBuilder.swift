@@ -34,6 +34,7 @@ struct ComposeBuilder {
         /// 顶层 secrets：名字 → 文件的绝对路径。写法不支持的（已经报过错）记成 nil，服务引用它时不再报“没有声明”
         var secrets: [String: String?] = [:]
         var idleMinutes: Int?
+        var hostPorts: [String] = []
         for (key, value) in top {
             switch key {
             case "services", "name": break // name：napbox 自己给环境命名
@@ -62,7 +63,8 @@ struct ComposeBuilder {
             case "x-napbox":
                 for (k, v) in value.entries ?? [] {
                     if k == "idle_minutes", let s = v.string, let n = Int(s), n > 0 { idleMinutes = n }
-                    else { issues.append(.unsupported("x-napbox.\(k)：不认识的设置或值（顶层只有 idle_minutes，正整数）")) }
+                    else if k == "host_ports" { hostPorts = hostPortNames(v) }
+                    else { issues.append(.unsupported("x-napbox.\(k)：不认识的设置或值（顶层只有 idle_minutes，正整数；host_ports，名字列表）")) }
                 }
             case "secrets":
                 for (name, v) in value.entries ?? [] {
@@ -144,8 +146,26 @@ struct ComposeBuilder {
         let reserved = run != nil ? [] : all.map(\.0).filter { !activeNames.contains($0.name) && !$0.ports.isEmpty }
         return ComposeProject(
             services: active.sorted { $0.name < $1.name }, volumes: volumes.sorted(), idleMinutes: idleMinutes, unsetVariables: [],
-            reservedPorts: reserved.isEmpty ? nil : Dictionary(uniqueKeysWithValues: reserved.map { ($0.name, $0.ports) })
+            reservedPorts: reserved.isEmpty ? nil : Dictionary(uniqueKeysWithValues: reserved.map { ($0.name, $0.ports) }),
+            hostPorts: run != nil || hostPorts.isEmpty ? nil : hostPorts
         )
+    }
+
+    /// x-napbox.host_ports 的名字：小写字母开头，只用小写字母、数字和下划线，不能重复。
+    /// 不能以 `_数字` 结尾：变量 NAPBOX_HOST_<名字> 就不会和服务端口的 NAPBOX_<服务>_<容器端口> 撞名，也不会被当成服务端口变量
+    private mutating func hostPortNames(_ v: YAMLTree) -> [String] {
+        var names: [String] = []
+        for name in strings(v, "x-napbox.host_ports") {
+            let p = "x-napbox.host_ports.\(name)"
+            if !HostPortVariables.isValidName(name) {
+                issues.append(.invalid("\(p)：名字要小写字母开头，只用小写字母、数字和下划线，不能以 _数字 结尾（比如 server、e2e_web、worker2）"))
+            } else if names.contains(name) {
+                issues.append(.invalid("\(p)：重复了"))
+            } else {
+                names.append(name)
+            }
+        }
+        return names
     }
 
     // MARK: - 单个服务
@@ -691,20 +711,27 @@ struct ComposeBuilder {
 
     /// 引用的端口变量（PortReferences）只能用在 environment（含 env_file）里，要是启用的服务在 ports 里写的端口：
     /// 地址要到起服务时才填，别的字段（镜像、命令、挂载）读 compose 时就要定下来。
+    /// 本机程序的端口（NAPBOX_HOST_<名字>）哪里都不能引用：环境里访问不到本机。
     private mutating func checkPortReferences(_ services: [Service]) {
         let known = Set(services.flatMap { s in s.ports.map { PortVariables.name(service: s.name, port: $0) } })
         for s in services {
             for (k, v) in s.environment.sorted(by: { $0.key < $1.key }) {
-                for name in PortReferences.names(in: v) where !known.contains(name) {
-                    issues.append(.invalid("services.\(s.name).environment.\(k)：\(name) 不是这个环境的端口变量，要是启用的服务在 ports 里写的端口"))
+                for name in PortReferences.names(in: v) {
+                    let p = "services.\(s.name).environment.\(k)"
+                    if HostPortVariables.isVariable(name) { issues.append(.unsupported("\(p)：\(Self.hostPortReference(name))")) }
+                    else if !known.contains(name) { issues.append(.invalid("\(p)：\(name) 不是这个环境的端口变量，要是启用的服务在 ports 里写的端口")) }
                 }
             }
             var rest = s
             rest.environment = [:]
             let text = (try? JSONEncoder().encode(rest)).map { String(decoding: $0, as: UTF8.self) } ?? ""
-            if text.contains("\\u0001") {
-                issues.append(.unsupported("services.\(s.name)：NAPBOX_ 开头的端口变量只能用在 environment 和 env_file 里"))
+            for name in Set(PortReferences.names(in: text.replacingOccurrences(of: "\\u0001", with: "\u{1}"))).sorted() {
+                issues.append(.unsupported("services.\(s.name)：\(HostPortVariables.isVariable(name) ? Self.hostPortReference(name) : "NAPBOX_ 开头的端口变量只能用在 environment 和 env_file 里（\(name)）")"))
             }
         }
+    }
+
+    private static func hostPortReference(_ name: String) -> String {
+        "\(name) 是本机程序的端口（x-napbox.host_ports），环境里访问不到本机，compose 里不能引用"
     }
 }

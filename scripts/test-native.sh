@@ -108,7 +108,8 @@ check "状态文件坏了：说明原因、不覆盖" sh -c "grep -q '状态文�
 fixrepo="$work/fixrepo"; git init -q "$fixrepo"; fixrepo="$(cd "$fixrepo" && pwd -P)"
 cat >"$state" <<JSON
 {"version":1,"environments":[{"name":"demo/main","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":[],"egress":"open",
- "ports":[{"service":"db","containerPort":5432,"hostPort":38431},{"service":"api","containerPort":3100,"hostPort":38432}]}]}
+ "ports":[{"service":"db","containerPort":5432,"hostPort":38431},{"service":"api","containerPort":3100,"hostPort":38432}],
+ "hostPorts":[{"name":"server","hostPort":38433}]}]}
 JSON
 python3 -I -c 'import socket,time; s=socket.socket(); s.bind(("0.0.0.0", 38432)); s.listen(1); time.sleep(30)' &
 holder=$!; pids+=("$holder"); sleep 0.3
@@ -118,6 +119,9 @@ port_taken() { ! port_free "$1"; }
 check "登记的空闲端口被锁上" port_taken 38431
 check "被占的端口记进日志" grep -q "38432 被别的程序占着" "$work/s2.log"
 check "日志说明锁上几个" grep -q "锁上 1/2 个端口" "$work/s2.log"
+check "本机进程的端口不锁，留给项目的进程监听" port_free 38433
+check "status 列出本机进程的端口" test "$("$napbox" status | jq -c '.environments[0].hostPorts')" = '[{"hostPort":38433,"name":"server","variable":"NAPBOX_HOST_SERVER"}]'
+check "变量里有它，值是端口号" test "$("$napbox" status | jq -r '.environments[0].variables.NAPBOX_HOST_SERVER')" = 38433
 kill -TERM "$s2"; wait_exit "$s2"; kill "$holder" 2>/dev/null
 check "napboxd 退出后端口放开" port_free 38431
 rm -f "$state"

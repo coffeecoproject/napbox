@@ -15,7 +15,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { connect } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, afterEach, before, describe, test } from "node:test";
@@ -563,11 +563,32 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     await rejectsWithCode(client.environment(fresh), "environment_not_found");
   });
 
-  test("worktree 持有的环境：up，按目录操作，按名字操作被拒绝", async () => {
-    const wt = repo("demo", "services:\n  app:\n    image: alpine:3.20\n    command: [\"sleep\", \"100000\"]\n    stop_grace_period: 1s\n");
+  test("worktree 持有的环境：up，按目录操作，按名字操作被拒绝；本机进程的端口分了、不占着", async () => {
+    const wt = repo(
+      "demo",
+      "x-napbox: {host_ports: [server, web]}\nservices:\n  app:\n    image: alpine:3.20\n    command: [\"sleep\", \"100000\"]\n    stop_grace_period: 1s\n",
+    );
     const info = await client.up({ cwd: wt, environment: {} });
     assert.equal(info.owner, undefined);
     assert.equal(info.state, "running");
+    assert.deepEqual(
+      info.hostPorts.map((p) => [p.name, p.variable]),
+      [
+        ["server", "NAPBOX_HOST_SERVER"],
+        ["web", "NAPBOX_HOST_WEB"],
+      ],
+    );
+    for (const p of info.hostPorts) assert.equal(info.variables[p.variable], String(p.hostPort));
+    // 项目自己的程序能监听它（napboxd 没占着）
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(info.hostPorts[0]!.hostPort, "127.0.0.1", resolve);
+    });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const portsFile = JSON.parse(readFileSync(path.join(wt, ".napbox", "ports.json"), "utf8"));
+    assert.deepEqual(portsFile.hostPorts, info.hostPorts);
+    assert.equal(portsFile.variables.NAPBOX_HOST_WEB, String(info.hostPorts[1]!.hostPort));
     const byDirectory = { cwd: wt };
     assert.equal((await client.environment(byDirectory)).name, info.name);
     const raw = await rawCall(daemon.socketPath, methods.environment, { target: byDirectory });
@@ -584,7 +605,9 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     });
     assert.equal(exitCode, 0);
     assert.equal(output, "在 worktree 里\n");
-    assert.equal((await client.down(byDirectory)).name, info.name);
+    const down = await client.down(byDirectory);
+    assert.equal(down.name, info.name);
+    assert.deepEqual(down.releasedPorts, info.hostPorts.map((p) => p.hostPort).sort((a, b) => a - b), "本机进程的端口也放开");
     await rejectsWithCode(client.environment(byDirectory), "environment_not_found");
   });
 

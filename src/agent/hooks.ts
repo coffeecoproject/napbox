@@ -62,6 +62,9 @@ export function describeEnvironment(info: EnvironmentInfo): string {
       `- ${port.service}:${port.containerPort} → 127.0.0.1:${port.hostPort}（变量 ${port.variable}）`,
     );
   }
+  for (const port of info.hostPorts) {
+    lines.push(`- 本机程序用的 ${port.name} → 端口 ${port.hostPort}（变量 ${port.variable}，napbox 不占着，项目的程序自己监听）`);
+  }
   if (info.state !== "running") lines.push("休眠时一连接就会自动唤醒，不用手动启动。");
   if (info.lastError) lines.push(`最近出错：${info.lastError}`);
   if (info.unsetVariables.length) {

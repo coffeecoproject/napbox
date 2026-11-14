@@ -23,6 +23,7 @@ export {
   errorCodes,
   type EventKind,
   type ExecResult,
+  type HostPortInfo,
   type LogsResult,
   type OutputStream,
   type PortInfo,

@@ -8,6 +8,7 @@ import path from "node:path";
 import { after, before, type TestContext, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { generatedFiles } from "../scripts/plugins.ts";
+import { describeEnvironment } from "../src/agent/hooks.ts";
 import { type Daemon, McpClient, startDaemon } from "./support.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -246,6 +247,22 @@ test("钩子：napboxd 没运行时，有 .napbox.yaml 的项目照样拦，并�
   const plain = gitRepository("no-daemon-plain");
   assert.equal(hook(bash("docker compose up", plain), noDaemon), undefined);
   assert.equal(hook({ hook_event_name: "SessionStart", cwd: plain }, noDaemon), undefined);
+});
+
+test("会话开始的说明：服务的端口和本机程序用的端口都列出来", () => {
+  const note = describeEnvironment({
+    name: "demo/main",
+    state: "sleeping",
+    worktree: "/demo",
+    ports: [{ service: "db", containerPort: 5432, hostPort: 41001, variable: "NAPBOX_DB_5432" }],
+    hostPorts: [{ name: "server", hostPort: 41002, variable: "NAPBOX_HOST_SERVER" }],
+    egress: "open",
+    variables: { NAPBOX_DB_5432: "127.0.0.1:41001", NAPBOX_HOST_SERVER: "41002" },
+    unsetVariables: [],
+    serviceExits: [],
+  });
+  assert.ok(note.includes("db:5432 → 127.0.0.1:41001（变量 NAPBOX_DB_5432）"));
+  assert.ok(note.includes("server → 端口 41002（变量 NAPBOX_HOST_SERVER"));
 });
 
 test("命令入口：别的命令交给原生命令行，退出码和输出都是它的", () => {

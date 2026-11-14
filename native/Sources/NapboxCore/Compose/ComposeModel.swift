@@ -16,6 +16,9 @@ public struct ComposeProject: Codable, Equatable, Sendable {
     /// 只是不转发、不列出，换 profile 再 up 时还是同一个端口；服务从 compose 里删掉才释放。
     /// napbox run 不留
     public var reservedPorts: [String: [Int]]? = nil
+    /// x-napbox.host_ports：项目在本机上自己跑的进程（开发后台、页面测试起的服务）要的端口名，按写的顺序。
+    /// 和服务的端口从同一个范围分、同样固定到 down，但 napboxd 不占着，给项目的进程自己监听。没写是 nil；napbox run 不留
+    public var hostPorts: [String]? = nil
 
     public func service(_ name: String) -> Service? { services.first { $0.name == name } }
 

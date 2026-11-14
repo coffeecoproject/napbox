@@ -147,6 +147,7 @@ const counterparts: Record<string, z.ZodType> = {
   EgressMode: protocol.EgressMode,
   EnvironmentInfo: protocol.EnvironmentInfo,
   PortInfo: protocol.PortInfo,
+  HostPortInfo: protocol.HostPortInfo,
   UpParams: protocol.UpParams,
   RunParams: protocol.RunParams,
   EnvironmentParams: protocol.EnvironmentParams,

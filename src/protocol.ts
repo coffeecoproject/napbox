@@ -77,6 +77,12 @@ export const PortInfo = z.object({
   variable: z.string(),
 });
 
+export const HostPortInfo = z.object({
+  name: z.string(),
+  hostPort: z.int(),
+  variable: z.string(),
+});
+
 export const ServiceExit = z.object({
   service: z.string(),
   exitCode: z.int(),
@@ -90,6 +96,7 @@ export const EnvironmentInfo = z.object({
   state: EnvironmentState,
   worktree: z.string(),
   ports: z.array(PortInfo),
+  hostPorts: z.array(HostPortInfo),
   egress: EgressMode,
   variables: z.record(z.string(), z.string()),
   unsetVariables: z.array(z.string()),
@@ -251,6 +258,7 @@ export type EventKind = z.infer<typeof EventKind>;
 export type SleepReason = z.infer<typeof SleepReason>;
 export type NapboxErrorBody = z.infer<typeof NapboxErrorBody>;
 export type PortInfo = z.infer<typeof PortInfo>;
+export type HostPortInfo = z.infer<typeof HostPortInfo>;
 export type ServiceExit = z.infer<typeof ServiceExit>;
 export type EnvironmentInfo = z.infer<typeof EnvironmentInfo>;
 export type StatusResult = z.infer<typeof StatusResult>;

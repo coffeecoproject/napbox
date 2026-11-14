@@ -63,6 +63,7 @@ struct Status: ParsableCommand {
             print("\n\(env.name)  \(env.state.rawValue)  \(env.worktree)")
             if let owner = env.owner { print("  持有方：\(owner)") }
             for p in env.ports { print("  \(p.service):\(p.containerPort)\t\(env.variables[p.variable] ?? "")\t\(p.variable)") }
+            for p in env.hostPorts { print("  本机 \(p.name)\t\(p.hostPort)\t\(p.variable)") }
             if let error = env.lastError { print("  最近出错：\(error)") }
         }
     }
@@ -151,7 +152,7 @@ struct Env: ParsableCommand, RawOutput {
     func run() throws {
         let params = EnvironmentParams(target: options.target)
         let info = try Output.call(Method.environment, params: try Wire.value(params), as: EnvironmentInfo.self)
-        // 值只有 127.0.0.1:端口，变量名只有大写字母、数字和下划线，不用转义
+        // 值只有 127.0.0.1:端口 或端口号，变量名只有大写字母、数字和下划线，不用转义
         for (name, value) in info.variables.sorted(by: { $0.key < $1.key }) { print("export \(name)=\(value)") }
     }
 }

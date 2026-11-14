@@ -69,7 +69,7 @@ extension Daemon {
         // ports.json 只写开发环境的：临时环境的端口在返回值里，也可以 napbox env --temp 再取
         if temporary == nil {
             try await Blocking.run { () throws(NapboxError) in
-                try PortsFile.write(environment: name, ports: registered.activePorts, worktree: location.worktree)
+                try PortsFile.write(environment: name, ports: registered.activePorts, hostPorts: registered.hostPorts ?? [], worktree: location.worktree)
             }
         }
         return info(registered)
@@ -204,10 +204,11 @@ extension Daemon {
         if shuttingDown { throw Self.exiting }
         try Self.checkCaller(foreground)
         let ip = try AddressAllocator.allocate(environment: name, state: store.state, inUseOnNetwork: neighbors)
-        let ports = try PortAllocator.assign(requests, environment: name, state: store.state, locks: locks)
+        let ports = try PortAllocator.assign(requests, hostPorts: project.hostPorts ?? [], environment: name, state: store.state, locks: locks)
         return try store.update { (state: inout NapboxState) throws(NapboxError) -> EnvironmentRecord in
             var r = state.environment(name) ?? newRecord(state)
             r.ports = ports.ports
+            r.hostPorts = ports.hostPorts.isEmpty ? nil : ports.hostPorts
             state.recordAllocation(ports)
             r.ip = ip
             r.definition = project

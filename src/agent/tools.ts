@@ -187,7 +187,7 @@ export const tools: readonly Tool[] = [
     name: "env",
     title: "查看环境",
     description:
-      "当前 worktree 环境的状态、端口和变量（比如 NAPBOX_API_3100=127.0.0.1:41217）。不唤醒环境。代码连服务时用这里的地址。",
+      "当前 worktree 环境的状态、端口和变量（比如 NAPBOX_API_3100=127.0.0.1:41217）。不唤醒环境。代码连服务时用这里的地址。compose 写了 x-napbox.host_ports 时还有 NAPBOX_HOST_<名字>=端口号，给项目在本机跑的程序自己监听。",
     input: z.strictObject({ directory, temp }),
     annotations: READ,
     async run(args, context) {
