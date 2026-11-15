@@ -299,12 +299,10 @@ export const tools: readonly Tool[] = [
     name: "setup",
     title: "首次准备",
     description:
-      "第一次使用前的准备，或工具报 daemon_unavailable 时调用：下载约 700MB 的内核包，把后台程序 napboxd 注册成登录项并启动。已经准备好的不重做。有环境在运行时不会换版本，除非 restart 为 true。",
-    input: z.strictObject({
-      restart: z.boolean().optional().describe("有环境在运行时也更新后台程序，运行中的环境会停止，连接会断开"),
-    }),
+      "第一次使用前的准备，或工具报 daemon_unavailable 时调用：下载约 700MB 的内核包，把后台程序 napboxd 注册成登录项并启动。已经准备好的不重做。后台程序要换版本时直接换：正在运行的环境会停下、连接断开，数据和端口都在，下次连接自动唤醒。",
+    input: z.strictObject({}),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
-    run: (args) => setup({ restart: args.restart ?? false, log: () => {} }),
+    run: () => setup({ log: () => {} }),
   }),
 ];
 

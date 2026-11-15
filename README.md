@@ -8,7 +8,7 @@ napbox reads a project's compose file and gives every git worktree its own isola
 
 It is built on Apple's open-source [Containerization](https://github.com/apple/containerization) framework: one lightweight Linux VM per environment, with all its services in it.
 
-**Status: 0.1.3, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
+**Status: 0.1.4, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
 
 ## Requirements
 

@@ -12,13 +12,11 @@ import { registerMcp, setup } from "./agent/setup.ts";
 const [command, ...rest] = process.argv.slice(2);
 
 async function runSetup(args: string[]) {
-  const restart = args.includes("--restart");
-  const others = args.filter((arg) => arg !== "--restart");
-  const [agent, extra] = others;
+  const [agent, extra] = args;
   if (extra !== undefined || (agent !== undefined && agent !== "claude" && agent !== "codex")) {
-    throw new NapboxError("usage_error", "用法：napbox setup [claude|codex] [--restart]");
+    throw new NapboxError("usage_error", "用法：napbox setup [claude|codex]");
   }
-  const result = await setup({ restart, log: (line) => process.stderr.write(`${line}\n`) });
+  const result = await setup({ log: (line) => process.stderr.write(`${line}\n`) });
   const mcp = agent ? await registerMcp(agent) : undefined;
   process.stdout.write(`${JSON.stringify({ ...result, mcp })}\n`);
 }

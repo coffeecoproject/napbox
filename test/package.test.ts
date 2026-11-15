@@ -2,7 +2,7 @@
 // 假的 npm registry 提供 .pack 里的包 → 插件的启动脚本安装它 → setup 工具（下载内核、注册 launchd）→ 起真实的虚拟机。
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
@@ -115,6 +115,12 @@ before(async () => {
   if (given) {
     mkdirSync(path.join(support, "kernel"));
     copyFileSync(given, path.join(support, "kernel", path.basename(given)));
+  }
+  const givenRunc = process.env.NAPBOX_TEST_RUNC;
+  if (givenRunc) {
+    mkdirSync(path.join(support, "runc"));
+    copyFileSync(givenRunc, path.join(support, "runc", path.basename(givenRunc)));
+    chmodSync(path.join(support, "runc", path.basename(givenRunc)), 0o755);
   }
   const registryUrl = await startRegistry();
   const { NAPBOX_BIN: _ignored, ...inherited } = process.env;
@@ -250,22 +256,15 @@ test("插件的钩子：会话开始和压缩后说端口；compose up 被拦；
   assert.equal(pluginHook(bash(other)), undefined);
 });
 
-test("有环境在运行时不换版本；restart 才换，换完连接进来自动恢复", { timeout: 300_000 }, async () => {
+test("有环境在运行时也直接换版本，换完连接进来自动恢复", { timeout: 300_000 }, async () => {
+  assert.equal((await client.tool("env", { directory: project })).value.state, "running", "前提：环境在运行");
   const before = (await client.tool("status")).value.pid;
   // 模拟装好的程序和包里的不同
   appendFileSync(path.join(support, "daemon", version, "napboxd"), "x");
-  const kept = await client.tool("setup");
-  assert.equal(kept.isError, false, JSON.stringify(kept.value));
-  assert.equal(kept.value.daemon, "kept");
-  assert.equal(kept.value.pid, before);
-  assert.ok(kept.value.runningEnvironments.length === 1);
-  assert.ok(kept.value.message.includes("restart"));
-  assert.ok((await readPort(web.hostPort)).includes("hello-from-web"), "环境不该被打断");
-
-  const restarted = await client.tool("setup", { restart: true });
-  assert.equal(restarted.isError, false, JSON.stringify(restarted.value));
-  assert.equal(restarted.value.daemon, "restarted");
-  assert.notEqual(restarted.value.pid, before);
+  const { value, isError } = await client.tool("setup");
+  assert.equal(isError, false, JSON.stringify(value));
+  assert.equal(value.daemon, "restarted");
+  assert.notEqual(value.pid, before);
   assert.ok((await readPort(web.hostPort)).includes("hello-from-web"), "端口保留，连接进来自动唤醒");
   assert.equal(readFileSync(path.join(support, "daemon", version, "napboxd")).at(-1) === "x".charCodeAt(0), false);
 });
@@ -279,6 +278,58 @@ test("没有环境在运行时直接换版本", { timeout: 120_000 }, async () =
   assert.notEqual(value.pid, before);
 });
 
+// 0.1.3 的 setup 先问正在运行的 napboxd 有没有环境在运行，0.1.2 的回应缺字段，报 protocol_error，升不上来。
+// 这里用一个只会给看不懂回应的程序顶替登录项，当作旧版。
+test("登录项是看不懂的旧版 napboxd 时照样换", { timeout: 300_000 }, async () => {
+  assert.equal(spawnSync("launchctl", ["bootout", service]).status, 0);
+  await waitUntil("napboxd 退出", async () => (await client.tool("status")).value.error?.code === "daemon_unavailable", 150_000);
+
+  const socketPath = path.join(support, "napboxd.sock");
+  const old = path.join(scratch, "old-napboxd.mjs");
+  writeFileSync(
+    old,
+    `import { createServer } from "node:net";
+import { rmSync } from "node:fs";
+rmSync(${JSON.stringify(socketPath)}, { force: true });
+createServer((socket) => socket.on("data", () => socket.write('{"id":1,"result":{"version":"0.0.1"}}\\n'))).listen(${JSON.stringify(socketPath)});
+process.on("SIGTERM", () => process.exit(0));
+`,
+  );
+  const plist = path.join(home, "Library/LaunchAgents", `${label}.plist`);
+  writeFileSync(
+    plist,
+    `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${process.execPath}</string>
+    <string>${old}</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+`,
+  );
+  mkdirSync(path.join(support, "daemon", "0.0.1"));
+  const registered = spawnSync("launchctl", ["bootstrap", `gui/${uid}`, plist], { encoding: "utf8" });
+  assert.equal(registered.status, 0, registered.stderr);
+  await waitUntil("旧版顶上来", async () => (await client.tool("status")).value.error?.code === "protocol_error");
+
+  const { value, isError } = await client.tool("setup");
+  assert.equal(isError, false, JSON.stringify(value));
+  assert.equal(value.daemon, "restarted");
+  assert.equal(value.daemonVersion, version);
+  const command = execFileSync("ps", ["-o", "command=", "-p", String(value.pid)], { encoding: "utf8" });
+  assert.equal(command.trim(), path.join(support, "daemon", version, "napboxd"));
+  assert.equal(existsSync(path.join(support, "daemon", "0.0.1")), false, "旧版本的目录删掉");
+  assert.ok((await readPort(web.hostPort)).includes("hello-from-web"), "环境还在，连接进来自动唤醒");
+});
+
 test("napboxd 崩溃后 launchd 把它拉起来，环境还能用", { timeout: 180_000 }, async () => {
   assert.ok((await readPort(web.hostPort)).includes("hello-from-web"));
   const before = (await client.tool("status")).value.pid;
@@ -288,6 +339,20 @@ test("napboxd 崩溃后 launchd 把它拉起来，环境还能用", { timeout: 1
     return !isError && value.pid !== before;
   }, 60_000);
   await delay(1000);
+  assert.ok((await readPort(web.hostPort)).includes("hello-from-web"));
+});
+
+test("napboxd 正常退出、登录项还在时，setup 把它拉起来", { timeout: 180_000 }, async () => {
+  const before = (await client.tool("status")).value.pid;
+  process.kill(before, "SIGTERM");
+  await waitUntil("napboxd 退出", async () => (await client.tool("status")).value.error?.code === "daemon_unavailable", 150_000);
+  await delay(12_000); // 超过 launchd 默认的 10 秒重启间隔：正常退出不该被拉起
+  assert.equal((await client.tool("status")).value.error?.code, "daemon_unavailable");
+  assert.equal(launchPrint().status, 0, "登录项还注册着");
+  const { value, isError } = await client.tool("setup");
+  assert.equal(isError, false, JSON.stringify(value));
+  assert.equal(value.daemon, "restarted");
+  assert.notEqual(value.pid, before);
   assert.ok((await readPort(web.hostPort)).includes("hello-from-web"));
 });
 

@@ -21,16 +21,13 @@ const START_TIMEOUT_MS = 20_000;
 
 export interface SetupResult {
   version: string;
-  /** started：新启动；restarted：换了版本；unchanged：已经是这个版本；kept：有环境在运行，没换 */
-  daemon: "started" | "restarted" | "unchanged" | "kept";
+  /** started：新启动；restarted：换了版本；unchanged：已经是这个版本 */
+  daemon: "started" | "restarted" | "unchanged";
   daemonVersion: string;
   pid: number;
-  message?: string;
-  runningEnvironments?: string[];
 }
 
 export interface SetupOptions {
-  restart: boolean;
   log: (line: string) => void;
 }
 
@@ -79,46 +76,37 @@ async function runningDaemon(client: NapboxClient): Promise<StatusResult | undef
 
 const fileHash = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
 
-export async function setup({ restart, log }: SetupOptions): Promise<SetupResult> {
+// 换不换版本只看文件：登录项是不是指着这个包里的程序，再看它在不在听。不问正在运行的 napboxd，它可能是旧版，协议对不上。
+// 在不在听要看：napboxd 收到 SIGTERM 正常退出后 launchd 不再拉起，登录项却还注册着。
+// 要换就直接换：正在运行的环境停掉、连接断开，数据和端口都在，下次连接自动唤醒。
+export async function setup({ log }: SetupOptions): Promise<SetupResult> {
   await checkPlatform();
   const source = nativeDirectory();
   const sourceDaemon = path.join(source, "napboxd");
   if (!existsSync(sourceDaemon)) throw failed(`没有 ${sourceDaemon}：包不完整`);
 
   const client = new NapboxClient();
-  const current = await runningDaemon(client);
   const registered = await isRegistered();
-  if (current && !registered) {
-    throw failed(`有一份不是登录项的 napboxd 在运行（pid ${current.pid}），先停掉它再运行 setup`);
+  if (!registered && (await client.accepts())) {
+    throw failed(`有一份不是登录项的 napboxd 在运行（${client.socketPath}），先停掉它再运行 setup`);
   }
 
   const installDirectory = path.join(supportDirectory(), "daemon", packageVersion);
   const installedDaemon = path.join(installDirectory, "napboxd");
   const sameProgram = existsSync(installedDaemon) && fileHash(installedDaemon) === fileHash(sourceDaemon);
-  const upToDate = current?.version === packageVersion && sameProgram;
-
-  if (current && !upToDate && !restart) {
-    const running = current.environments.filter((e) => e.state === "running").map((e) => e.name);
-    if (running.length) {
-      return {
-        version: packageVersion,
-        daemon: "kept",
-        daemonVersion: current.version,
-        pid: current.pid,
-        runningEnvironments: running,
-        message: `有 ${running.length} 个环境在运行，后台程序还是 ${current.version}，没有换。换版本会停掉这些环境、断开连接；要现在换就加 restart。`,
-      };
-    }
-  }
+  const upToDate =
+    registered && sameProgram && readLaunchAgent() === launchAgent(installedDaemon) && (await client.accepts());
 
   if (!sameProgram) await install(source, installDirectory);
   await prepare(installedDaemon, log);
-  if (current && upToDate) {
+  if (upToDate) {
+    const current = await waitForDaemon(client);
     return { version: packageVersion, daemon: "unchanged", daemonVersion: current.version, pid: current.pid };
   }
 
-  await writeLaunchAgent(installedDaemon);
+  // 先停旧的再写登录项：登录项指着这个程序，就说明旧的已经停了
   if (registered) await stopRegistered(client);
+  await writeLaunchAgent(installedDaemon);
   await bootstrap();
   const started = await waitForDaemon(client);
   if (started.version !== packageVersion) {
@@ -127,7 +115,7 @@ export async function setup({ restart, log }: SetupOptions): Promise<SetupResult
   await removeOldVersions(path.dirname(installDirectory));
   return {
     version: packageVersion,
-    daemon: current ? "restarted" : "started",
+    daemon: registered ? "restarted" : "started",
     daemonVersion: started.version,
     pid: started.pid,
   };
@@ -208,6 +196,11 @@ ${environment}</dict>
 
 const launchAgentPath = () => path.join(homedir(), "Library/LaunchAgents", `${launchLabel()}.plist`);
 
+function readLaunchAgent(): string | undefined {
+  const file = launchAgentPath();
+  return existsSync(file) ? readFileSync(file, "utf8") : undefined;
+}
+
 async function writeLaunchAgent(daemon: string) {
   const file = launchAgentPath();
   await mkdir(path.dirname(file), { recursive: true });
@@ -219,7 +212,7 @@ async function writeLaunchAgent(daemon: string) {
 async function stopRegistered(client: NapboxClient) {
   await launchctl("bootout", `${launchDomain()}/${launchLabel()}`).catch(() => {});
   const deadline = Date.now() + (EXIT_TIMEOUT_SECONDS + 10) * 1000;
-  while ((await isRegistered()) || (await runningDaemon(client))) {
+  while ((await isRegistered()) || (await client.accepts())) {
     if (Date.now() > deadline) throw failed("旧的 napboxd 一直没有退出");
     await sleep(200);
   }

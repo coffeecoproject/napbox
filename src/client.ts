@@ -142,6 +142,16 @@ export class NapboxClient {
     this.socketPath = options.socketPath ?? defaultSocketPath();
   }
 
+  /** socket 上有没有程序在听。只看连不连得上，不说协议：setup 面对的常是旧版 napboxd，它的回应新版不一定看得懂 */
+  async accepts(): Promise<boolean> {
+    try {
+      (await connect(this.socketPath)).destroy();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   status(): Promise<StatusResult> {
     return this.exchange({ method: methods.status, result: StatusResult });
   }
