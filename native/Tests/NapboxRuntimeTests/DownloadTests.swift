@@ -1,5 +1,6 @@
 // setup 下载内核包和 runc：断了从断开的地方接着下、卡住了算一次失败、服务器不认 Range 时从头下、
-// 跳转后还带着 Range、404 不重试、一直失败就放弃但已下的留着；校验不对删掉；给了本地文件就不下载。
+// 跳转后还带着 Range、404 不重试、一直失败就放弃但已下的留着；校验不对删掉；给了本地文件就不下载；
+// 同时只能跑一份 prepare。
 // 用本机的一个小 HTTP 服务模拟，每个请求怎么回由测试决定。
 import CryptoKit
 import Foundation
@@ -165,6 +166,18 @@ import Testing
                                          label: "测试", size: "", environment: ["NAPBOX_X": given.path]) { _ in }
         }
         #expect(error?.message.contains("NAPBOX_X") == true)
+    }
+
+    /// 两份 prepare 会往同一个半成品里写：第二份直接报错，说明是哪个进程；第一份放开后又能锁
+    @Test func secondPrepareIsRefused() throws {
+        let directory = try scratch()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = try Prepare.lock(in: directory)
+        let error = #expect(throws: NapboxError.self) { _ = try Prepare.lock(in: directory) }
+        #expect(error?.message.contains("已经有一个 napbox setup") == true)
+        #expect(error?.message.contains("进程 \(getpid())") == true)
+        close(first)
+        close(try Prepare.lock(in: directory))
     }
 }
 

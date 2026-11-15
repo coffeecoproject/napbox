@@ -28,11 +28,46 @@ public enum Prepare {
     static let vminitIdleTimeout: Duration = .seconds(60)
 
     /// 已经准备好的不重做。内核包和 runc 下到一半的留着，下次接着下；没校验过的不会放到位。
+    /// 同一时间只跑一份：两份会往同一个半成品里接着写，把它写坏。
     public static func run(supportDirectory: URL, log: @escaping @Sendable (String) -> Void) async throws(NapboxError) {
+        let lock = try lock(in: supportDirectory)
+        defer { close(lock) }
         try await installKernel(into: supportDirectory.appending(path: "kernel"), log: log)
         try await installRunc(at: RuntimeContainer.runc(in: supportDirectory), log: log)
         try await installRosetta(log: log)
         try await installVminit(supportDirectory: supportDirectory, log: log)
+    }
+
+    /// 锁住 prepare.lock，返回它的文件描述符；进程退出时系统自动放开，不会留下死锁。
+    /// 已经有一份在跑就不等它（它可能要下好几个小时），直接报错，说明是哪个进程。
+    static func lock(in supportDirectory: URL) throws(NapboxError) -> Int32 {
+        let path = supportDirectory.appending(path: "prepare.lock").path
+        do {
+            try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        } catch {
+            throw NapboxError(.runtimeUnavailable, "建不了目录 \(supportDirectory.path)：\(error.localizedDescription)")
+        }
+        let descriptor = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0o600)
+        guard descriptor >= 0 else {
+            throw NapboxError(.runtimeUnavailable, "打不开 \(path)：\(String(cString: strerror(errno)))")
+        }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let reason = errno
+            let holder = (try? String(contentsOfFile: path, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            close(descriptor)
+            guard reason == EWOULDBLOCK else {
+                throw NapboxError(.runtimeUnavailable, "锁不住 \(path)：\(String(cString: strerror(reason)))")
+            }
+            let who = holder.isEmpty ? "" : "（进程 \(holder)）"
+            throw NapboxError(.runtimeUnavailable,
+                              "已经有一个 napbox setup 在准备内核和 vminit\(who)，等它结束再运行。停掉它也行，下到一半的会留着接着下")
+        }
+        // 记下自己的进程号，给第二份报错时用
+        let pid = Data("\(getpid())\n".utf8)
+        if ftruncate(descriptor, 0) == 0 {
+            _ = pid.withUnsafeBytes { pwrite(descriptor, $0.baseAddress, $0.count, 0) }
+        }
+        return descriptor
     }
 
     /// 内核放在带版本的文件里，只有校验过才改名到位，所以它在就是好的；vmlinux 指向它。
