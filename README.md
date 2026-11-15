@@ -8,7 +8,7 @@ napbox reads a project's compose file and gives every git worktree its own isola
 
 It is built on Apple's open-source [Containerization](https://github.com/apple/containerization) framework: one lightweight Linux VM per environment, with all its services in it.
 
-**Status: 0.1.4, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
+**Status: 0.1.5, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
 
 ## Requirements
 
@@ -38,6 +38,7 @@ Without Claude Code: `npx napbox setup`.
 - **One environment per worktree.** Environments are named `<project>/<worktree>` (the main checkout is `<project>/main`). Two worktrees of the same project run side by side without port clashes.
 - **Ports.** In compose, write only the container port (`- "5432"`). napbox assigns a host port on `127.0.0.1` and keeps it for the environment across sleep, wake, `up` again, napboxd restarts and profile changes. It is released only on `down`. Other worktrees and temporary environments get other ports, so read them from `napbox env` instead of hard-coding them. When a service needs its own address on the host (for example to build links a browser opens), write `${NAPBOX_API_3100}` in `environment` or `env_file`; napbox replaces it with the address this environment was given (`127.0.0.1:41217`) when the service starts.
 - **Ports for processes on the Mac.** When the project's own programs that run on the Mac (a dev backend, the backend and web pages that end-to-end tests start) also need their own ports per worktree, add `x-napbox: {host_ports: [server, web]}` at the top level of compose. Each name gets one port, exposed as `NAPBOX_HOST_SERVER=41230` (just the port number), and it stays fixed until `down` like service ports. napbox does not hold these ports; the project's programs listen on them. napbox checks a port is free when it assigns it; if another program takes it later, the project's program fails to start with "address in use". Names use lowercase letters, digits and underscores, start with a letter, and must not end in `_<digits>`.
+- **Data from the main checkout.** Add `x-napbox: {seed: [pgdata, s3data]}` at the top level of compose to give a new worktree the main checkout's data (accounts, uploaded files) instead of empty volumes. Each time a worktree's environment stops cleanly (idle sleep, `napbox sleep`, napboxd quitting), napbox keeps an APFS clone of those volumes as its snapshot; the first `up` in a new worktree copies the main checkout's latest snapshot, without stopping or pausing it. It takes milliseconds and no extra disk space until either side writes. If the main checkout has no snapshot yet, `up` fails with `snapshot_not_found` rather than starting with empty volumes. One-off services such as migrations run again on the copied data.
 - **Sleep.** After 30 minutes without connections an environment sleeps and its memory goes back to macOS. The next connection to one of its ports wakes it; that connection waits only until the service it connects to (and the services that one depends on) is ready, usually about a second for a database, while the rest of the environment keeps starting. Services start one by one in dependency order, so a service later in that order also waits for the ones before it to start. If any of those services has a `develop.watch` sync rule, the connection waits for the whole environment, so files changed while it slept are already synced.
 - **Temporary environments.** `napbox up --temp <name>` starts a throwaway environment next to the dev one (an empty test database, for example), and `napbox down --temp <name>` deletes it. `napbox run <service>` starts a one-off environment, runs one service in the foreground and returns its exit code.
 - **Builds.** `build:` is built inside a dedicated VM with BuildKit; the build cache is shared by all environments.
@@ -55,7 +56,7 @@ All commands print JSON (`napbox status --text` prints a table).
 | `napbox logs <service> [--tail N] [-f]` | Service logs, without waking the environment |
 | `napbox exec <service> -- <command>` | Run a command in a service (not interactive) |
 | `napbox run <service> [-- <command>]` | Run one service once in a throwaway environment |
-| `napbox reset <volume>` | Empty a named volume (the old data is kept for 7 days) |
+| `napbox reset <volume...> [--from <dir>]` | Empty named volumes, or with `--from` replace them with the latest snapshot of another worktree's environment of the same project (the old data is kept for 7 days) |
 | `napbox sleep` / `napbox down` | Sleep now / remove the environment (data kept for 7 days) |
 | `napbox egress <open\|none>` | Switch network access |
 
