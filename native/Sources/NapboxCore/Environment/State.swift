@@ -103,8 +103,9 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     public enum PendingOperation: Codable, Equatable, Sendable {
         /// 回收（down、worktree 删掉、临时环境销毁）：数据移走（或删掉）以后还要放端口、删登记
         case recycle(reason: String, discardData: Bool)
-        /// reset 一个数据卷：卷移走以后还要清掉已跑完的一次性服务，下次起来重新初始化
-        case resetVolume(String)
+        /// 换掉数据卷（reset、x-napbox.seed）：旧卷移走，seed 不是 nil 时再把 incoming/ 里复制好的放进去，
+        /// 之后还要清掉已跑完的一次性服务，下次起来重新初始化（迁移在复制来的数据上重跑）
+        case replaceVolumes(volumes: [String], seed: SeedSource?)
     }
 
     public init(name: String, project: String?, mainRepository: String?, worktree: String, owner: Owner, ports: [PortAssignment] = [],

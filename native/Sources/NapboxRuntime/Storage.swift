@@ -11,7 +11,10 @@ struct Storage: Sendable {
     /// 回收后的数据保留多久
     static let recycledKeepSeconds: TimeInterval = 7 * 24 * 3600
 
-    func environmentDirectory(_ record: EnvironmentRecord) -> URL { root.appending(path: "environments/\(record.id)") }
+    func environmentDirectory(_ record: EnvironmentRecord) -> URL { environmentDirectory(id: record.id) }
+
+    /// 还没登记时也能算（第一次起环境时先复制快照，再登记）
+    func environmentDirectory(id: String) -> URL { root.appending(path: "environments/\(id)") }
 
     private var recycledRoot: URL { root.appending(path: "recycled") }
 
@@ -76,7 +79,7 @@ struct Storage: Sendable {
     }
 
     /// recycled 里这个环境 discard 时留下的：recycled/<环境 ID>-<时间>/data，recycled.json 记的是这个环境名。
-    /// 只有 discard 是这种结构（down 回收的是环境目录本身，reset 的是 volumes/<卷>.ext4）
+    /// 只有 discard 是这种结构（down 回收的是环境目录本身，reset 和换成复制来的卷的是 volumes/<卷>.ext4）
     private func undeletedDiscards(_ record: EnvironmentRecord) -> [URL] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(at: recycledRoot, includingPropertiesForKeys: nil) else { return [] }

@@ -35,6 +35,7 @@ struct ComposeBuilder {
         var secrets: [String: String?] = [:]
         var idleMinutes: Int?
         var hostPorts: [String] = []
+        var seed: [String] = []
         for (key, value) in top {
             switch key {
             case "services", "name": break // name：napbox 自己给环境命名
@@ -64,7 +65,8 @@ struct ComposeBuilder {
                 for (k, v) in value.entries ?? [] {
                     if k == "idle_minutes", let s = v.string, let n = Int(s), n > 0 { idleMinutes = n }
                     else if k == "host_ports" { hostPorts = hostPortNames(v) }
-                    else { issues.append(.unsupported("x-napbox.\(k)：不认识的设置或值（顶层只有 idle_minutes，正整数；host_ports，名字列表）")) }
+                    else if k == "seed" { seed = strings(v, "x-napbox.seed") }
+                    else { issues.append(.unsupported("x-napbox.\(k)：不认识的设置或值（顶层只有 idle_minutes，正整数；host_ports，名字列表；seed，命名卷列表）")) }
                 }
             case "secrets":
                 for (name, v) in value.entries ?? [] {
@@ -83,6 +85,7 @@ struct ComposeBuilder {
                 issues.append(.unsupported("\(key)：第一版不支持这个顶层字段"))
             }
         }
+        checkSeed(seed, volumes: volumes)
         guard let serviceEntries = root["services"]?.entries, !serviceEntries.isEmpty else {
             issues.append(.invalid("没有 services"))
             return nil
@@ -147,8 +150,22 @@ struct ComposeBuilder {
         return ComposeProject(
             services: active.sorted { $0.name < $1.name }, volumes: volumes.sorted(), idleMinutes: idleMinutes, unsetVariables: [],
             reservedPorts: reserved.isEmpty ? nil : Dictionary(uniqueKeysWithValues: reserved.map { ($0.name, $0.ports) }),
-            hostPorts: run != nil || hostPorts.isEmpty ? nil : hostPorts
+            hostPorts: run != nil || hostPorts.isEmpty ? nil : hostPorts,
+            seed: run != nil || seed.isEmpty ? nil : Array(Set(seed)).sorted()
         )
+    }
+
+    /// x-napbox.seed 只能列顶层声明过的命名卷，不能重复
+    private mutating func checkSeed(_ seed: [String], volumes: [String]) {
+        var seen: Set<String> = []
+        for name in seed {
+            if !volumes.contains(name) {
+                let known = volumes.isEmpty ? "顶层没有声明命名卷" : "有：\(volumes.sorted().joined(separator: "、"))"
+                issues.append(.invalid("x-napbox.seed.\(name)：不是顶层声明的命名卷，\(known)"))
+            } else if !seen.insert(name).inserted {
+                issues.append(.invalid("x-napbox.seed.\(name)：重复了"))
+            }
+        }
     }
 
     /// x-napbox.host_ports 的名字：小写字母开头，只用小写字母、数字和下划线，不能重复。

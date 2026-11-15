@@ -312,9 +312,27 @@ public actor Runtime {
         try storage.deleteEnvironment(record)
     }
 
-    /// napbox reset：把一个数据卷移到 recycled 下保留 7 天，下次启动时建一个空的。环境要先停掉。卷还没建过时返回 nil。
-    public nonisolated func recycleVolume(_ record: EnvironmentRecord, volume: String, reason: String) throws(NapboxError) -> URL? {
-        try storage.recycleVolume(record, volume: volume, reason: reason)
+    /// napbox reset：换掉数据卷。旧卷移到 recycled 下保留 7 天；seed 是 false 时下次启动建空的，
+    /// 是 true 时换成 stageSeed 复制到 incoming/ 的（已经换进去的跳过）。环境要先停掉。
+    public nonisolated func replaceVolumes(_ record: EnvironmentRecord, volumes: [String], seed: Bool, reason: String) throws(NapboxError) {
+        try storage.replaceVolumes(record, volumes: volumes, seed: seed, reason: reason)
+    }
+
+    // MARK: - 数据快照（x-napbox.seed）
+
+    /// 环境刚正常停下：给 project.seed 里的卷拍快照，换掉旧的。返回拍了哪些卷；声明的卷都没建过时是 nil
+    public nonisolated func takeSnapshot(_ record: EnvironmentRecord, project: ComposeProject) throws(NapboxError) -> [String]? {
+        try storage.takeSnapshot(record, project: project)?.volumes
+    }
+
+    /// 把源环境最新快照里的这些卷复制到目标环境（按环境 ID，可以还没登记）的 incoming/，等 replaceVolumes 换进去
+    public nonisolated func stageSeed(from source: EnvironmentRecord, to targetID: String, volumes: [String]) throws(NapboxError) -> SeedSource {
+        try storage.stageSeed(from: source, to: targetID, volumes: volumes)
+    }
+
+    /// napboxd 启动时：删掉没在换卷的环境留下的 incoming/ 和没拍完的快照
+    public nonisolated func removeLeftoverSeeds(keepingIncoming ids: Set<String>) -> [String] {
+        storage.removeLeftoverSeeds(keepingIncoming: ids)
     }
 
     /// 删掉 recycled 下保留期满的数据，返回要记进日志的话

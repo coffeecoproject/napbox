@@ -166,13 +166,19 @@ for b in sys.argv[1].encode(): h = ((h ^ b) * 1099511628211) & 0xFFFFFFFFFFFFFFF
 print(format(h, "x"))' "$1"
 }
 envs="$NAPBOX_SUPPORT_DIR/environments"
-main_id="$(id_of demo/main)"; half_id="$(id_of codeos/half)"; logs="$NAPBOX_SUPPORT_DIR/builder/logs"
-mkdir -p "$envs/$main_id/volumes" "$envs/$half_id/volumes" "$logs/$main_id" "$logs/0123abcd"
+main_id="$(id_of demo/main)"; half_id="$(id_of codeos/half)"; seed_id="$(id_of demo/seeded)"; logs="$NAPBOX_SUPPORT_DIR/builder/logs"
+mkdir -p "$envs/$main_id/volumes" "$envs/$main_id/incoming" "$envs/$main_id/snapshots/unfinished" "$envs/$half_id/volumes" \
+    "$envs/$seed_id/volumes" "$envs/$seed_id/incoming" "$logs/$main_id" "$logs/0123abcd"
 echo pg >"$envs/$main_id/volumes/pg.ext4"; echo kept >"$envs/$main_id/volumes/other.ext4"; echo data >"$envs/$half_id/volumes/db.ext4"
+# 从快照复制（接着做和持有方无关，用调用方持有的环境，免得伪造的 worktree 被当成删掉了回收）：pg 已经换进去了（incoming 里没有了），s3 还在 incoming 里；demo/main 的 incoming 没有换卷的记号，是留下的
+echo copied-pg >"$envs/$seed_id/volumes/pg.ext4"; echo copied-s3 >"$envs/$seed_id/incoming/s3.ext4"; echo old-s3 >"$envs/$seed_id/volumes/s3.ext4"
+echo stray >"$envs/$main_id/incoming/pg.ext4"
 cat >"$state" <<JSON
 {"version":1,"environments":[
  {"name":"demo/main","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":["migrate"],"egress":"open","ports":[],
-  "pending":{"resetVolume":{"_0":"pg"}}},
+  "pending":{"replaceVolumes":{"volumes":["pg"]}}},
+ {"name":"demo/seeded","worktree":"$work/seeded","owner":{"caller":{"id":"demo"}},"completedServices":["migrate"],"egress":"open","ports":[],
+  "pending":{"replaceVolumes":{"volumes":["pg","s3"],"seed":{"environment":"demo/main","takenAt":"2026-11-15T00:00:00Z","volumes":["pg","s3"]}}}},
  {"name":"codeos/half","worktree":"$work/half","owner":{"caller":{"id":"codeos"}},"completedServices":["migrate"],"egress":"open",
   "ports":[{"service":"db","containerPort":5432,"hostPort":38451}],"pending":{"recycle":{"reason":"codeos 销毁","discardData":false}}},
  {"name":"codeos/moved","worktree":"$work/moved","owner":{"caller":{"id":"codeos"}},"completedServices":[],"egress":"open",
@@ -180,7 +186,7 @@ cat >"$state" <<JSON
 JSON
 start_daemon "$work/s5.log"; s5=$started
 wait_socket
-check "回收做完：登记里只剩 reset 的那个" test "$(jq -c '[.environments[].name]' "$state")" = '["demo/main"]'
+check "回收做完：登记里只剩换卷的那两个" test "$(jq -c '[.environments[].name]' "$state")" = '["demo/main","demo/seeded"]'
 check "回收的数据移进 recycled，带 recycled.json" sh -c "f=\$(ls -d '$recycled/$half_id'-* | head -1) && test -f \"\$f/volumes/db.ext4\" -a -f \"\$f/recycled.json\""
 check "环境目录不在原处了" test ! -e "$envs/$half_id"
 check "回收的环境的端口放开了" port_free 38451
@@ -189,11 +195,38 @@ check "日志说明接着回收" grep -q "codeos/half 上次回收没做完（co
 check "reset 做完：卷移进 recycled，带 recycled.json" sh -c "f=\$(ls -d '$recycled/$main_id'-*-pg) && test -f \"\$f/volumes/pg.ext4\" -a -f \"\$f/recycled.json\""
 check "reset 做完：别的卷不动" test -f "$envs/$main_id/volumes/other.ext4"
 check "reset 做完：一次性服务重新初始化、记号去掉" test "$(jq -c '.environments[0] | [.completedServices, .pending]' "$state")" = '[[],null]'
+check "从快照复制接着做完：已经换进去的不动，没换的换进去" sh -c "grep -qx copied-pg '$envs/$seed_id/volumes/pg.ext4' && grep -qx copied-s3 '$envs/$seed_id/volumes/s3.ext4' && test ! -e '$envs/$seed_id/incoming'"
+check "从快照复制接着做完：被换掉的旧卷进 recycled" sh -c "f=\$(ls -d '$recycled/$seed_id'-*-s3) && grep -qx old-s3 \"\$f/volumes/s3.ext4\""
+check "从快照复制接着做完：一次性服务重新初始化、记号去掉" test "$(jq -c '.environments[1] | [.completedServices, .pending]' "$state")" = '[[],null]'
+check "没在换卷的环境留下的复制数据、没拍完的快照删掉" sh -c "test ! -e '$envs/$main_id/incoming' -a ! -e '$envs/$main_id/snapshots/unfinished'"
 check "登记着的环境的构建日志不动" sh -c "test -d '$logs/$main_id' && ! grep -q '$main_id 没有登记' '$work/s5.log'"
 # 这份 napboxd 没有内核，查不了镜像：日志说明，构建日志留着下次再试
 check "没登记的环境留下的构建结果：查不了镜像时留着、日志说明" sh -c "test -d '$logs/0123abcd' && grep -q '0123abcd 没有登记，它留下的构建结果删不掉' '$work/s5.log'"
 kill -TERM "$s5"; wait_exit "$s5"
 rm -rf "$state" "$recycled" "$envs" "$NAPBOX_SUPPORT_DIR/builder"
+
+echo "换卷失败：记号和复制来的数据都留着，下次再做"
+stuck_id="$(id_of codeos/stuck)"
+mkdir -p "$envs/$stuck_id/volumes" "$envs/$stuck_id/incoming" "$recycled"
+echo old >"$envs/$stuck_id/volumes/pg.ext4"; echo copied >"$envs/$stuck_id/incoming/pg.ext4"
+cat >"$state" <<JSON
+{"version":1,"environments":[
+ {"name":"codeos/stuck","worktree":"$work/stuck","owner":{"caller":{"id":"codeos"}},"completedServices":["migrate"],"egress":"open","ports":[],
+  "pending":{"replaceVolumes":{"volumes":["pg"],"seed":{"environment":"codeos/other","takenAt":"2026-11-15T00:00:00Z","volumes":["pg"]}}}}]}
+JSON
+chmod 555 "$recycled" # 旧卷移不进 recycled
+start_daemon "$work/s6.log"; s6=$started
+wait_socket
+check "换卷失败：记号留着" test "$(jq -c '.environments[0].pending | keys' "$state")" = '["replaceVolumes"]'
+check "换卷失败：旧卷、复制来的数据都还在原处" sh -c "grep -qx old '$envs/$stuck_id/volumes/pg.ext4' && grep -qx copied '$envs/$stuck_id/incoming/pg.ext4'"
+check "换卷失败：日志说明" grep -q "codeos/stuck 换数据卷 pg（从 codeos/other 的快照复制） 没做完：移走" "$work/s6.log"
+kill -TERM "$s6"; wait_exit "$s6"
+chmod 755 "$recycled"
+start_daemon "$work/s7.log"; s7=$started
+wait_socket
+check "再启动时换完：复制来的换进去，记号去掉" sh -c "grep -qx copied '$envs/$stuck_id/volumes/pg.ext4' && test ! -e '$envs/$stuck_id/incoming' && test \"\$(jq -c '.environments[0] | [.completedServices, .pending]' '$state')\" = '[[],null]'"
+kill -TERM "$s7"; wait_exit "$s7"
+rm -rf "$state" "$recycled" "$envs"
 
 echo "调用方持有的环境（不起虚拟机）"
 # 和 CodeOS 的 Goal 副本一样：独立的 git 仓库，目录叫 repo

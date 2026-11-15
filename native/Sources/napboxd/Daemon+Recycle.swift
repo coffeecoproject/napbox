@@ -32,7 +32,7 @@ extension Daemon {
     /// discardData：调用方要求不保留数据，移走后马上删；删失败时结果里的 keptDataAt 写明数据还在哪（7 天后删）。
     func recycle(_ record: EnvironmentRecord, reason: String, discardData: Bool = false) async throws(NapboxError) -> DownResult {
         if shuttingDown { throw Self.exiting }
-        await stopRunning(record.name)
+        await stopRunning(record.name, snapshot: false)
         try setPending(record.name, .recycle(reason: reason, discardData: discardData))
         return try await finishRecycle(record, reason: reason, discardData: discardData)
     }
@@ -76,9 +76,10 @@ extension Daemon {
         }
     }
 
-    /// napboxd 启动时、开始监听端口之前：上次没做完的回收和 reset 接着做完（这时环境都没在运行）；
-    /// 再删掉登记里没有的环境留下的构建结果。做不完的记进日志：回收移不走数据时环境照常登记、休眠，
-    /// reset 移不走卷时卷原样留着（这两种都去掉记号）；移走了、写状态文件失败的，记号留着下次再做。
+    /// napboxd 启动时、开始监听端口之前：上次没做完的回收和换数据卷（reset、x-napbox.seed）接着做完（这时环境都没在运行）；
+    /// 再删掉登记里没有的环境留下的构建结果、没在换卷的环境留下的复制数据和没拍完的快照。做不完的记进日志：
+    /// 回收移不走数据时去掉记号，环境照常登记、休眠；换卷失败时记号留着，环境起来之前（launch）再做；
+    /// 回收移走了、写状态文件失败的，记号留着下次再做。
     func finishPendingOperations() async {
         for record in store.state.environments {
             switch record.pending {
@@ -92,17 +93,22 @@ extension Daemon {
                 } catch {
                     print("环境 \(record.name) 回收失败，照常登记、下次再回收：\(error.message)")
                 }
-            case .resetVolume(let volume):
-                print("环境 \(record.name) 上次 reset \(volume) 没做完，接着做")
+            case .replaceVolumes(let volumes, let seed):
+                let what = volumes.joined(separator: "、") + (seed.map { "（从 \($0.environment) 的快照复制）" } ?? "")
+                print("环境 \(record.name) 上次换数据卷 \(what) 没做完，接着做")
                 do {
-                    _ = try finishReset(record, volume: volume)
+                    _ = try finishReplace(record, volumes: volumes, seed: seed)
                 } catch {
-                    print("环境 \(record.name) reset \(volume) 没做完：\(error.message)")
+                    print("环境 \(record.name) 换数据卷 \(what) 没做完：\(error.message)")
                 }
             }
         }
         let ids = Set(store.state.environments.map(\.id))
         for message in await runtime.removeLeftoverBuilds(keeping: ids) { print(message) }
+        let seeding = Set(store.state.environments.filter {
+            if case .replaceVolumes(_, .some) = $0.pending { true } else { false }
+        }.map(\.id))
+        for message in runtime.removeLeftoverSeeds(keepingIncoming: seeding) { print(message) }
     }
 
     /// 只是多占点硬盘，不算回收失败

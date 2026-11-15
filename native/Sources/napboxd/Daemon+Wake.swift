@@ -223,13 +223,33 @@ extension Daemon {
     /// （它们可能在 up 返回之后才结束），唤醒时就不再启动它们。端口监听不动，有连接进来会再唤醒。
     /// - sleep：这次是休眠时给原因，停完发事件。重启、回收的停是中间步骤，不算休眠，由它们自己发事件
     /// - keepCompleted：false 是定义已经换了，这个环境跑完的一次性服务不再算数
-    func stopRunning(_ name: String, sleep: EnvironmentEvent.SleepReason? = nil, keepCompleted: Bool = true) async {
+    /// - snapshot：正常停下后给 x-napbox.seed 声明的卷拍快照。回收时不拍，环境要没了
+    func stopRunning(_ name: String, sleep: EnvironmentEvent.SleepReason? = nil, keepCompleted: Bool = true, snapshot: Bool = true) async {
         guard let env = running.removeValue(forKey: name) else { return }
         await stopWatching(name)
         await connections.closeAll(name)
         if keepCompleted { await saveCompleted(name, env) }
-        await env.stop()
+        let clean = await env.stop()
+        if snapshot { takeSnapshot(name, clean: clean) }
         if let sleep { emit(name, .slept) { $0.sleepReason = sleep } }
+    }
+
+    /// 只给 worktree 的开发环境拍（别的 worktree 从它复制）；被直接关掉、没存好盘的不拍，旧快照留着。
+    /// 拍不成只记日志，不影响停环境。在 actor 上同步做：克隆几个文件只要几毫秒，也不会和别人从快照复制交错
+    private func takeSnapshot(_ name: String, clean: Bool) {
+        guard let record = store.state.environment(name), record.owner == .worktree, record.temporary == nil,
+              let project = record.definition, project.seed != nil else { return }
+        guard clean else {
+            print("环境 \(name) 没有正常停下，不拍快照，留着上一份")
+            return
+        }
+        do {
+            if let volumes = try runtime.takeSnapshot(record, project: project) {
+                print("环境 \(name) 拍了快照：\(volumes.joined(separator: "、"))")
+            }
+        } catch {
+            print(error.message)
+        }
     }
 
     func saveCompleted(_ name: String, _ env: RunningEnvironment) async {

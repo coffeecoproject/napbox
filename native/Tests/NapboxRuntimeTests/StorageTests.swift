@@ -132,3 +132,117 @@ struct StorageTests {
         #expect(recycledEntries(storage).isEmpty)
     }
 }
+
+/// 数据快照（x-napbox.seed）：拍快照、从快照复制到别的环境、换进卷里，中途停下能接着做
+struct SnapshotTests {
+    private let fm = FileManager.default
+
+    private func project(seed: [String]) throws -> ComposeProject {
+        let dir = fm.temporaryDirectory.appending(path: "nbx-compose-\(UUID().uuidString)")
+        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: dir) }
+        let file = dir.appending(path: "compose.yaml")
+        try Data("""
+        x-napbox: {seed: [\(seed.joined(separator: ", "))]}
+        services:
+          db: {image: "postgres:17", volumes: ["pg:/data", "s3:/s3"]}
+        volumes: {pg: {}, s3: {}}
+        """.utf8).write(to: file)
+        return try ComposeLoader.load(ComposeInput(files: [file], callerEnvironment: [:], profiles: []))
+    }
+
+    private func setUp() throws -> (Storage, main: EnvironmentRecord, branch: EnvironmentRecord) {
+        let root = fm.temporaryDirectory.appending(path: "nbx-snapshot-\(UUID().uuidString)")
+        let storage = Storage(root: root)
+        let main = EnvironmentRecord(name: "p/main", project: "p", mainRepository: "/r/p", worktree: "/r/p", owner: .worktree)
+        let branch = EnvironmentRecord(name: "p/b", project: "p", mainRepository: "/r/p", worktree: "/r/p/.wt/b", owner: .worktree)
+        return (storage, main, branch)
+    }
+
+    private func write(_ storage: Storage, _ record: EnvironmentRecord, volume: String, _ text: String) throws {
+        let url = storage.environmentDirectory(record).appending(path: EnvironmentLayout.volumePath(volume))
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(text.utf8).write(to: url)
+    }
+
+    private func read(_ storage: Storage, _ record: EnvironmentRecord, volume: String) -> String? {
+        let url = storage.environmentDirectory(record).appending(path: EnvironmentLayout.volumePath(volume))
+        return fm.contents(atPath: url.path).map { String(decoding: $0, as: UTF8.self) }
+    }
+
+    /// 只拍声明了、建过的卷；新的拍完删旧的；之后源再改不影响快照，复制过去的两边各写各的
+    @Test func snapshotThenSeed() throws {
+        let (storage, main, branch) = try setUp()
+        defer { try? fm.removeItem(at: storage.root) }
+        try write(storage, main, volume: "pg", "v1")
+        #expect(try storage.takeSnapshot(main, project: try project(seed: ["pg", "s3"]))?.volumes == ["pg"], "s3 还没建过，不拍")
+        try write(storage, main, volume: "pg", "v2")
+        try write(storage, main, volume: "s3", "files")
+        let second = try #require(try storage.takeSnapshot(main, project: try project(seed: ["pg", "s3"])))
+        #expect(second.volumes == ["pg", "s3"])
+        let dirs = try fm.contentsOfDirectory(atPath: storage.environmentDirectory(main).appending(path: "snapshots").path)
+        #expect(dirs.count == 1, "只留最新的一份")
+        try write(storage, main, volume: "pg", "v3-after-snapshot")
+
+        try write(storage, branch, volume: "pg", "branch-old")
+        let seed = try storage.stageSeed(from: main, to: branch.id, volumes: ["s3", "pg"])
+        #expect(seed.environment == "p/main" && seed.volumes == ["pg", "s3"] && seed.takenAt == second.takenAt)
+        #expect(read(storage, branch, volume: "pg") == "branch-old", "换卷之前目标不动")
+        try storage.replaceVolumes(branch, volumes: ["pg", "s3"], seed: true, reason: "test")
+        #expect(read(storage, branch, volume: "pg") == "v2", "拿到的是快照时的数据，不是源后来写的")
+        #expect(read(storage, branch, volume: "s3") == "files")
+        #expect(!fm.fileExists(atPath: storage.incomingDirectory(environmentID: branch.id).path))
+        let recycled = try fm.contentsOfDirectory(atPath: storage.root.appending(path: "recycled").path)
+        #expect(recycled.count == 1, "目标原来的 pg 进了 recycled（s3 原来没有）")
+
+        try write(storage, branch, volume: "pg", "branch-new")
+        #expect(read(storage, main, volume: "pg") == "v3-after-snapshot")
+        #expect(try storage.stageSeed(from: main, to: branch.id, volumes: ["pg"]).takenAt == second.takenAt, "快照也没被分支改动")
+    }
+
+    /// 换卷做到一半停下：已经换进去的再做一遍时跳过，不会把复制来的又移走
+    @Test func replaceIsResumable() throws {
+        let (storage, main, branch) = try setUp()
+        defer { try? fm.removeItem(at: storage.root) }
+        try write(storage, main, volume: "pg", "main")
+        try write(storage, main, volume: "s3", "main-s3")
+        _ = try storage.takeSnapshot(main, project: try project(seed: ["pg", "s3"]))
+        _ = try storage.stageSeed(from: main, to: branch.id, volumes: ["pg", "s3"])
+        try storage.replaceVolumes(branch, volumes: ["pg"], seed: true, reason: "test") // 只换了 pg 就停下
+        try storage.replaceVolumes(branch, volumes: ["pg", "s3"], seed: true, reason: "test") // 接着做
+        #expect(read(storage, branch, volume: "pg") == "main")
+        #expect(read(storage, branch, volume: "s3") == "main-s3")
+        // 不带 seed 是换成空的：旧卷移走
+        try storage.replaceVolumes(branch, volumes: ["pg"], seed: false, reason: "test")
+        #expect(read(storage, branch, volume: "pg") == nil)
+    }
+
+    /// 没有快照、快照里缺卷报 snapshot_not_found，目标不动
+    @Test func missingSnapshot() throws {
+        let (storage, main, branch) = try setUp()
+        defer { try? fm.removeItem(at: storage.root) }
+        #expect { try storage.stageSeed(from: main, to: branch.id, volumes: ["pg"]) } throws: { ($0 as? NapboxError)?.code == "snapshot_not_found" }
+        try write(storage, main, volume: "pg", "main")
+        _ = try storage.takeSnapshot(main, project: try project(seed: ["pg"]))
+        #expect { try storage.stageSeed(from: main, to: branch.id, volumes: ["pg", "s3"]) } throws: { ($0 as? NapboxError)?.code == "snapshot_not_found" }
+        #expect(!fm.fileExists(atPath: storage.incomingDirectory(environmentID: branch.id).path))
+    }
+
+    /// napboxd 启动时：没在换卷的环境留下的 incoming/、没拍完的快照删掉；在换卷的留着
+    @Test func leftoversRemoved() throws {
+        let (storage, main, branch) = try setUp()
+        defer { try? fm.removeItem(at: storage.root) }
+        try write(storage, main, volume: "pg", "main")
+        _ = try storage.takeSnapshot(main, project: try project(seed: ["pg"]))
+        let unfinished = storage.environmentDirectory(main).appending(path: "snapshots/unfinished")
+        try fm.createDirectory(at: unfinished, withIntermediateDirectories: true)
+        _ = try storage.stageSeed(from: main, to: branch.id, volumes: ["pg"])
+        let other = EnvironmentRecord(name: "p/c", project: "p", mainRepository: "/r/p", worktree: "/r/p/.wt/c", owner: .worktree)
+        _ = try storage.stageSeed(from: main, to: other.id, volumes: ["pg"])
+        _ = storage.removeLeftoverSeeds(keepingIncoming: [branch.id])
+        #expect(!fm.fileExists(atPath: unfinished.path))
+        #expect(storage.latestSnapshot(main) != nil)
+        #expect(fm.fileExists(atPath: storage.incomingDirectory(environmentID: branch.id).path))
+        #expect(!fm.fileExists(atPath: storage.incomingDirectory(environmentID: other.id).path))
+    }
+}

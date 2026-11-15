@@ -255,13 +255,24 @@ export const tools: readonly Tool[] = [
   }),
   define({
     name: "reset",
-    title: "清空数据卷",
+    title: "换掉数据卷",
     description:
-      "把一个数据卷恢复成空的，再重新起环境（一次性服务会重跑）。其他数据卷不动。旧数据保留 7 天。",
-    input: z.strictObject({ directory, volume: z.string().describe("数据卷名") }),
+      "把数据卷换成空的，或者用 from 换成别的 worktree（比如主目录）环境最新快照里的那份，再重新起环境（一次性服务会重跑，迁移在新数据上跑）。" +
+      "没点名的数据卷不动。旧数据保留 7 天。快照是源环境正常停下（闲置休眠、sleep）时拍的，要它的 compose 声明了 x-napbox.seed；复制不影响源环境。",
+    input: z.strictObject({
+      directory,
+      volumes: z.array(z.string()).min(1).describe("数据卷名，可以给几个"),
+      from: z
+        .string()
+        .optional()
+        .describe("从这个目录所在 worktree 的开发环境的快照复制，比如主目录的路径；同一个项目。不写是换成空的"),
+    }),
     annotations: DESTROY,
     async run(args, context) {
-      return context.client.reset(await target(args, context), args.volume);
+      const base = await context.sessionDirectory();
+      return context.client.reset(await target(args, context), args.volumes, {
+        from: args.from === undefined ? undefined : path.resolve(base, args.from),
+      });
     },
   }),
   define({

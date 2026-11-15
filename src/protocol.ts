@@ -27,6 +27,7 @@ export const errorCodes = [
   "service_failed",
   "service_not_found",
   "volume_not_found",
+  "snapshot_not_found",
   "healthcheck_timeout",
   "address_unavailable",
   "name_taken",
@@ -90,6 +91,13 @@ export const ServiceExit = z.object({
   restart: ServiceExitRestart,
 });
 
+/** 从哪个环境的快照复制了哪些数据卷（x-napbox.seed、reset 的 from） */
+export const SeedSource = z.object({
+  environment: z.string(),
+  takenAt: isoDate,
+  volumes: z.array(z.string()),
+});
+
 export const EnvironmentInfo = z.object({
   name: z.string(),
   owner: z.string().optional(),
@@ -103,6 +111,8 @@ export const EnvironmentInfo = z.object({
   lastError: z.string().optional(),
   watchError: z.string().optional(),
   serviceExits: z.array(ServiceExit),
+  /** 只在这次 up、reset 起环境之前从别的环境的快照复制了数据时才有 */
+  seededFrom: SeedSource.optional(),
 });
 
 export const StatusResult = z.object({
@@ -152,7 +162,8 @@ export const CreateParams = z.object({
   egress: EgressMode.optional(),
 });
 
-export const ResetParams = z.object({ target: EnvironmentTarget, volume: z.string() });
+/** from：不写换成空的；写了换成那个目录所在 worktree 的开发环境最新快照里的那份 */
+export const ResetParams = z.object({ target: EnvironmentTarget, volumes: z.array(z.string()), from: z.string().optional() });
 export const EgressParams = z.object({ target: EnvironmentTarget, mode: EgressMode });
 
 export const DownResult = z.object({
@@ -205,6 +216,7 @@ export const RunRecord = z.object({
   egress: EgressMode,
   ports: z.array(PortInfo),
   services: z.array(ServiceRun),
+  seededFrom: SeedSource.optional(),
 });
 
 export const RunsResult = z.object({ runs: z.array(RunRecord) });
@@ -271,6 +283,7 @@ export type DownResult = z.infer<typeof DownResult>;
 export type LogsResult = z.infer<typeof LogsResult>;
 export type ExecResult = z.infer<typeof ExecResult>;
 export type ServiceRun = z.infer<typeof ServiceRun>;
+export type SeedSource = z.infer<typeof SeedSource>;
 export type RunRecord = z.infer<typeof RunRecord>;
 export type RunsResult = z.infer<typeof RunsResult>;
 export type SubscribeParams = z.infer<typeof SubscribeParams>;

@@ -9,7 +9,7 @@ import { callTool, listTools } from "./tools.ts";
 const ROOTS_WAIT_MS = 5_000;
 
 const INSTRUCTIONS =
-  "napbox 用项目的 compose 文件给每个 worktree 起一套隔离的开发服务（数据库、对象存储、后端），不用 Docker，端口不冲突，同一个环境的端口固定不变，闲置自动休眠，连接时自动唤醒。需要这些服务时用 up 工具，不要运行 docker compose up。测试要一套用完就扔的服务时给 up 传 temp，要单独跑一次某个服务时用 run 工具，不要运行 docker run。前端、小程序要连后端时，由项目的启动脚本从 up 或 env 取地址交给它们，不要把端口写进代码；项目在本机自己跑的程序要监听端口时，在 compose 写 x-napbox.host_ports 由 napbox 分。新项目要用这些服务时也照这样：写 compose.yaml（ports 只写容器端口）用 up 起，项目的脚本和 README 里不要用 docker，写法见 napbox 技能。";
+  "napbox 用项目的 compose 文件给每个 worktree 起一套隔离的开发服务（数据库、对象存储、后端），不用 Docker，端口不冲突，同一个环境的端口固定不变，闲置自动休眠，连接时自动唤醒。需要这些服务时用 up 工具，不要运行 docker compose up。测试要一套用完就扔的服务时给 up 传 temp，要单独跑一次某个服务时用 run 工具，不要运行 docker run。前端、小程序要连后端时，由项目的启动脚本从 up 或 env 取地址交给它们，不要把端口写进代码；项目在本机自己跑的程序要监听端口时，在 compose 写 x-napbox.host_ports 由 napbox 分；分支要主目录的真实数据时，在 compose 写 x-napbox.seed，由 napbox 从主目录环境的快照复制数据卷，不要自己导库。新项目要用这些服务时也照这样：写 compose.yaml（ports 只写容器端口）用 up 起，项目的脚本和 README 里不要用 docker，写法见 napbox 技能。";
 
 type Message = {
   id?: string | number | null;

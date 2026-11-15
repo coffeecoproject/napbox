@@ -70,7 +70,7 @@ describe("真实 napboxd：请求和错误码", () => {
     await rejectsWithCode(client.down(missing), "environment_not_found");
     await rejectsWithCode(client.runs(missing), "environment_not_found");
     await rejectsWithCode(client.egress(missing, "none"), "environment_not_found");
-    await rejectsWithCode(client.reset(missing, "data"), "environment_not_found");
+    await rejectsWithCode(client.reset(missing, ["data"]), "environment_not_found");
     const onOutput = () => assert.fail("不该有输出");
     await rejectsWithCode(
       client.logs({ target: missing, service: "app", onOutput }),

@@ -52,9 +52,10 @@ extension Daemon {
                rebuild: Bool, foreground: ForegroundService?) async throws(NapboxError) -> EnvironmentInfo? {
         if let existing = store.state.environment(name),
            existing.owner != .worktree || existing.worktree != location.worktree.path || existing.temporary != temporary { return nil }
+        let seed = try stageFirstSeed(name, location: location, temporary: temporary, project: project)
         let registered: EnvironmentRecord
         do {
-            registered = try await bringUp(name, project: project, egress: egress, rebuild: rebuild, foreground: foreground) { state in
+            registered = try await bringUp(name, project: project, egress: egress, rebuild: rebuild, foreground: foreground, seed: seed) { state in
                 EnvironmentRecord(
                     name: name, project: state.projectName(for: location.mainRepository), mainRepository: location.mainRepository.path,
                     worktree: location.worktree.path, owner: .worktree, temporary: temporary
@@ -64,6 +65,7 @@ extension Daemon {
             // 临时环境还没登记就失败了（构建到一半、镜像拉不下来）：已经构建出来的镜像没有环境可跟着销毁，这里删。
             // 登记以后才失败的，launch 已经把它整个销毁、镜像也删了；那时登记同样不在，这里再删一遍是空的
             if temporary != nil, store.state.environment(name) == nil { await removeBuiltImages(name) }
+            // 还没登记就失败了时，复制到 incoming/ 的留着：下次 up 复制前先清空它，napboxd 启动时也清掉没有换卷记号的
             throw error
         }
         // ports.json 只写开发环境的：临时环境的端口在返回值里，也可以 napbox env --temp 再取
@@ -72,7 +74,22 @@ extension Daemon {
                 try PortsFile.write(environment: name, ports: registered.activePorts, hostPorts: registered.hostPorts ?? [], worktree: location.worktree)
             }
         }
-        return info(registered)
+        var result = info(registered)
+        result.seededFrom = seed
+        return result
+    }
+
+    /// x-napbox.seed：worktree 的开发环境第一次创建时（还没登记），先把主目录环境最新快照里声明的卷复制到它的 incoming/。
+    /// 登记时一起记上换卷的记号（bringUp），起环境之前（launch）换进去。主目录自己、临时环境不复制。
+    /// 主目录没有环境或没有快照时报错，不退回成空卷
+    private func stageFirstSeed(_ name: String, location: WorktreeLocation, temporary: String?,
+                                project: ComposeProject) throws(NapboxError) -> SeedSource? {
+        guard temporary == nil, !location.isMain, let volumes = project.seed, store.state.environment(name) == nil else { return nil }
+        guard let source = store.state.environment(worktree: location.mainRepository.path, temporary: nil) else {
+            throw NapboxError(.snapshotNotFound, "compose 声明了 x-napbox.seed（\(volumes.joined(separator: "、"))），要从主目录 \(location.mainRepository.path) 的环境复制数据，"
+                + "但主目录还没有开发环境，也就没有快照：先在主目录 napbox up，等它正常停下一次（闲置休眠或 napbox sleep）；不要数据就把卷从 x-napbox.seed 去掉")
+        }
+        return try runtime.stageSeed(from: source, to: EnvironmentRecord.id(of: name), volumes: volumes)
     }
 
     // MARK: - create（调用方持有的环境）
@@ -120,9 +137,11 @@ extension Daemon {
     /// - egress：要切到的出网模式，nil 是不变（新环境 open）
     /// - rebuild：up --build，写了 build 的服务都重新构建
     /// - foreground：napbox run 在前台跑的那个服务
+    /// - seed：第一次创建、已经复制到 incoming/ 的数据（x-napbox.seed）。新登记里同时记上换卷的记号，和登记是同一次写入：
+    ///   之后哪一步停下（失败、napboxd 被杀），记号都在，launch 或 napboxd 启动时接着换进去，不会变成登记了却一直是空卷
     /// - newRecord：还没登记时的新登记
     func bringUp(_ name: String, project: ComposeProject, egress: EgressMode?, rebuild: Bool, foreground: ForegroundService? = nil,
-                 newRecord: (NapboxState) -> EnvironmentRecord) async throws(NapboxError) -> EnvironmentRecord {
+                 seed: SeedSource? = nil, newRecord: (NapboxState) -> EnvironmentRecord) async throws(NapboxError) -> EnvironmentRecord {
         if shuttingDown { throw Self.exiting }
         let startedAt = Date()
         let rebuilt: Bool
@@ -145,7 +164,11 @@ extension Daemon {
         }
         let record: EnvironmentRecord
         do {
-            record = try await prepare(name, project: project, egress: egress, foreground: foreground, newRecord: newRecord)
+            record = try await prepare(name, project: project, egress: egress, foreground: foreground) { state in
+                var r = newRecord(state)
+                if let seed { r.pending = .replaceVolumes(volumes: seed.volumes, seed: seed) }
+                return r
+            }
         } catch {
             await preparationFailed(name, project: project, startedAt: startedAt, error: error)
             throw error
@@ -227,6 +250,8 @@ extension Daemon {
     /// - purpose：这次是为什么起。按 restart 重启时保留退避和重启次数，别的情况重新算
     /// - foreground：napbox run 在前台跑的那个服务
     /// - progress：起到哪了（唤醒时连接等自己的服务就绪用）
+    /// 登记里有没换完的数据卷（reset、x-napbox.seed 记上的，或者上次换到一半失败了）时先换完再起：
+    /// 一次性服务跟着重跑，从快照复制的记进运行记录（seededFrom）
     func launch(_ record: EnvironmentRecord, project: ComposeProject, skipping: Set<String>,
                 purpose: RunRecord.Purpose, foreground: ForegroundService? = nil,
                 progress: StartProgress = StartProgress()) async throws(NapboxError) {
@@ -235,19 +260,28 @@ extension Daemon {
         let trace = RunTrace()
         let startedAt = Date()
         let runId = Self.newRunId()
+        var record = record, skipping = skipping
+        var seededFrom: SeedSource?
         let env: RunningEnvironment
         do {
+            if case .replaceVolumes(let volumes, let seed) = store.state.environment(name)?.pending {
+                record = try finishReplace(record, volumes: volumes, seed: seed)
+                skipping = []
+                seededFrom = seed
+            }
             try lockPorts(record)
             // 先开始监听：起环境期间进来的连接排队等着，唤醒时等它连的服务就绪就转发（route）
             await syncListeners(name)
             env = try await runtime.start(record, project: project, skipping: skipping, foreground: foreground, trace: trace,
                                           progress: progress)
         } catch {
-            await startFailed(record, project: project, id: runId, purpose: purpose, startedAt: startedAt, error: error, trace: trace)
+            await startFailed(record, project: project, id: runId, purpose: purpose, startedAt: startedAt, error: error, trace: trace,
+                              seededFrom: seededFrom)
             if record.temporary != nil { await destroyTemporary(name, reason: "\(Self.description(purpose))失败") }
             throw error
         }
-        await saveRun(record, project: project, id: runId, purpose: purpose, startedAt: startedAt, error: nil, trace: trace)
+        await saveRun(record, project: project, id: runId, purpose: purpose, startedAt: startedAt, error: nil, trace: trace,
+                      seededFrom: seededFrom)
         sessions[name, default: EnvSession()].lastFailure = nil
         sessions[name, default: EnvSession()].restart.launched(at: Date(), restarting: purpose == .restart)
         // 没跑的这段时间改的文件先同步进去，再登记成运行中：登记之后进来的连接直接转发
@@ -270,8 +304,9 @@ extension Daemon {
 
     /// 这次起环境失败了（可能还没走到 launch）：留运行记录、记下原因（冷却、status 用）、发事件。
     private func startFailed(_ record: EnvironmentRecord, project: ComposeProject, id: String = Daemon.newRunId(),
-                             purpose: RunRecord.Purpose, startedAt: Date, error: NapboxError, trace: RunTrace = RunTrace()) async {
-        await saveRun(record, project: project, id: id, purpose: purpose, startedAt: startedAt, error: error, trace: trace)
+                             purpose: RunRecord.Purpose, startedAt: Date, error: NapboxError, trace: RunTrace = RunTrace(),
+                             seededFrom: SeedSource? = nil) async {
+        await saveRun(record, project: project, id: id, purpose: purpose, startedAt: startedAt, error: error, trace: trace, seededFrom: seededFrom)
         sessions[record.name, default: EnvSession()].lastFailure = (Date(), "\(Self.description(purpose))失败：\(error.message)")
         emit(record.name, .startFailed) {
             $0.purpose = purpose
@@ -293,10 +328,11 @@ extension Daemon {
 
     /// 运行记录写不下去不影响环境本身，记进日志
     private func saveRun(_ record: EnvironmentRecord, project: ComposeProject, id: String, purpose: RunRecord.Purpose,
-                         startedAt: Date, error: NapboxError?, trace: RunTrace) async {
+                         startedAt: Date, error: NapboxError?, trace: RunTrace, seededFrom: SeedSource? = nil) async {
         let run = RunRecord(
             id: id, environment: record.name, purpose: purpose, startedAt: startedAt, finishedAt: Date(), error: error,
-            definitionDigest: project.digest, egress: record.egress, ports: info(record).ports, services: trace.services
+            definitionDigest: project.digest, egress: record.egress, ports: info(record).ports, services: trace.services,
+            seededFrom: seededFrom
         )
         let runtime = runtime
         do {
@@ -308,53 +344,82 @@ extension Daemon {
 
     // MARK: - reset
 
-    /// 把一个数据卷恢复成初始状态（空的）：停掉环境，旧卷移到 recycled 下保留 7 天，再像 up 一样起来
-    /// （一次性服务重新跑，比如建库、建桶），返回和 up 一样的结果。用 up 时固定下来的定义。
+    /// 换掉数据卷，再像 up 一样起来（一次性服务重新跑，比如建库、迁移），返回和 up 一样的结果。用 up 时固定下来的定义。
+    /// 旧卷移到 recycled 下保留 7 天。不带 from 换成空的；带 from 换成那个 worktree 的开发环境最新快照里的那份
+    /// （x-napbox.seed，同一个项目），源环境不用停、不受影响。
     func reset(_ params: ResetParams) async throws(NapboxError) -> EnvironmentInfo {
         let record = try await record(for: params.target)
         if record.temporary != nil {
             throw NapboxError(.badRequest, "临时环境 \(record.name) 没有 reset：要空的数据就销毁了重新起（napbox down --temp \(record.temporary!)，再 napbox up --temp \(record.temporary!)）")
         }
-        return try await serialized(record.name) { () throws(NapboxError) in
-            try await self.resetVolume(record.name, params.volume)
+        guard !params.volumes.isEmpty else { throw NapboxError(.badRequest, "reset 至少要给一个数据卷") }
+        var sourceWorktree: String?
+        if let from = params.from { sourceWorktree = try await seedSourceWorktree(from, for: record) }
+        let volumes = Array(Set(params.volumes)).sorted()
+        return try await serialized(record.name) { [sourceWorktree] () throws(NapboxError) in
+            try await self.resetVolumes(record.name, volumes, sourceWorktree: sourceWorktree)
         }
     }
 
-    func resetVolume(_ name: String, _ volume: String) async throws(NapboxError) -> EnvironmentInfo {
+    /// reset --from 的源：那个目录所在 worktree，要和目标是同一个项目、不是它自己。目标要是 worktree 的开发环境
+    private func seedSourceWorktree(_ from: String, for record: EnvironmentRecord) async throws(NapboxError) -> String {
+        guard record.owner == .worktree, let main = record.mainRepository else {
+            throw NapboxError(.badRequest, "环境 \(record.name) 是调用方持有的，reset 不支持 from：只有 worktree 的开发环境能从别的 worktree 复制数据")
+        }
+        let location = try await Blocking.run { () throws(NapboxError) in try WorktreeLocation.locate(from: URL(fileURLWithPath: from)) }
+        guard location.mainRepository.path == main else {
+            throw NapboxError(.badRequest, "\(from) 不在环境 \(record.name) 的项目里（主仓库 \(main)），只能从同一个项目的 worktree 复制数据")
+        }
+        guard location.worktree.path != record.worktree else {
+            throw NapboxError(.badRequest, "\(from) 就是环境 \(record.name) 自己的 worktree，不能从自己复制")
+        }
+        return location.worktree.path
+    }
+
+    func resetVolumes(_ name: String, _ volumes: [String], sourceWorktree: String?) async throws(NapboxError) -> EnvironmentInfo {
         if shuttingDown { throw Self.exiting }
         guard let record = store.state.environment(name), let project = record.definition else {
             throw NapboxError(.environmentNotFound, "环境 \(name) 没有登记或没有定义")
         }
-        guard project.volumes.contains(volume) else {
+        let unknown = volumes.filter { !project.volumes.contains($0) }
+        guard unknown.isEmpty else {
             let known = project.volumes.isEmpty ? "这个环境没有命名卷" : "有：\(project.volumes.joined(separator: "、"))"
-            throw NapboxError(.volumeNotFound, "环境 \(name) 里没有数据卷 \(volume)，\(known)")
+            throw NapboxError(.volumeNotFound, "环境 \(name) 里没有数据卷 \(unknown.joined(separator: "、"))，\(known)")
+        }
+        // 上次换卷换到一半失败了：先换完，免得这次的记号盖掉它（这时环境没在运行：launch 起来之前会先换完）
+        if case .replaceVolumes(let pendingVolumes, let pendingSeed) = record.pending {
+            _ = try finishReplace(record, volumes: pendingVolumes, seed: pendingSeed)
+        }
+        // 先从源的快照复制好再停目标：源没有快照、快照里缺卷时目标原样不动
+        var seed: SeedSource?
+        if let sourceWorktree {
+            guard let source = store.state.environment(worktree: sourceWorktree, temporary: nil) else {
+                throw NapboxError(.environmentNotFound, "\(sourceWorktree) 还没有开发环境，也就没有快照：先在那边 napbox up，等它正常停下一次（闲置休眠或 napbox sleep）")
+            }
+            seed = try runtime.stageSeed(from: source, to: record.id, volumes: volumes)
         }
         await stopRunning(name)
-        let startedAt = Date()
-        let cleared: EnvironmentRecord
         do throws(NapboxError) {
-            // 先记上再移卷：卷移走了、一次性服务的记录还没清时 napboxd 被杀，下次启动接着做完（finishPendingOperations），
-            // 不会带着“已经初始化过”的记录在空卷上起来
-            try setPending(name, .resetVolume(volume))
-            cleared = try finishReset(record, volume: volume)
+            // 只记上，换卷由 launch 起环境之前做：卷换了、一次性服务的记录还没清时 napboxd 被杀，下次启动接着做完
+            // （finishPendingOperations），不会带着“已经初始化过”的记录在新卷上起来
+            try setPending(name, .replaceVolumes(volumes: volumes, seed: seed))
         } catch {
-            await startFailed(record, project: project, purpose: .reset, startedAt: startedAt, error: error)
+            await startFailed(record, project: project, purpose: .reset, startedAt: Date(), error: error)
             throw error
         }
-        try await launch(cleared, project: project, skipping: [], purpose: .reset)
-        return info(store.state.environment(name)!)
+        try await launch(store.state.environment(name)!, project: project, skipping: [], purpose: .reset)
+        var result = info(store.state.environment(name)!)
+        result.seededFrom = seed
+        return result
     }
 
-    /// reset 的后半段：环境已经停了、登记里已经记上“重置卷”。移走卷，再一次写进状态文件：
-    /// 清掉已跑完的一次性服务（下次起来重新初始化）、去掉记号。卷已经移走了（上次做到一半）就跳过移动。
-    /// 移不走卷时去掉记号（什么都没变）；卷移走了、写状态文件失败时记号留着，下次启动接着做完。
-    func finishReset(_ record: EnvironmentRecord, volume: String) throws(NapboxError) -> EnvironmentRecord {
-        do {
-            _ = try runtime.recycleVolume(record, volume: volume, reason: "napbox reset \(volume)")
-        } catch {
-            try? setPending(record.name, nil)
-            throw error
-        }
+    /// 换卷（reset、x-napbox.seed）：环境已经停了、登记里已经记上“换数据卷”。换卷，再一次写进状态文件：
+    /// 清掉已跑完的一次性服务（下次起来重新初始化）、去掉记号。上次做到一半的，已经换好的卷跳过。
+    /// 换卷或写状态文件失败时记号留着（复制来的也留在 incoming/）：环境起来之前（launch）、napboxd 下次启动时接着做完，
+    /// 在那之前环境起不来，不会在换了一半的卷上运行。
+    func finishReplace(_ record: EnvironmentRecord, volumes: [String], seed: SeedSource?) throws(NapboxError) -> EnvironmentRecord {
+        let reason = "napbox reset " + volumes.joined(separator: " ") + (seed.map { "（从 \($0.environment) 的快照复制）" } ?? "")
+        try runtime.replaceVolumes(record, volumes: volumes, seed: seed != nil, reason: reason)
         return try store.update { (state: inout NapboxState) throws(NapboxError) -> EnvironmentRecord in
             guard let i = state.environments.firstIndex(where: { $0.name == record.name }) else {
                 throw NapboxError(.environmentNotFound, "环境 \(record.name) 没有登记")

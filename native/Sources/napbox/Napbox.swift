@@ -217,13 +217,17 @@ struct Exec: ParsableCommand, RawOutput {
 }
 
 struct Reset: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "把数据卷恢复成初始状态（空的）：停掉环境，旧卷保留 7 天，再像 up 一样起来（一次性服务重新跑），返回和 up 一样的结果。")
+    static let configuration = CommandConfiguration(abstract: "换掉数据卷：停掉环境，旧卷保留 7 天，换成空的（或者 --from 那个 worktree 的环境最新快照里的那份），再像 up 一样起来（一次性服务重新跑，迁移在新数据上跑），返回和 up 一样的结果。")
 
-    @Argument(help: "数据卷名（compose 里 volumes 下的名字）")
-    var volume: String
+    @Argument(help: "数据卷名（compose 里 volumes 下的名字），可以给几个")
+    var volumes: [String]
+
+    @Option(help: "从这个目录所在 worktree 的开发环境最新的快照复制（同一个项目，比如主目录的路径）。快照要那边的 compose 声明了 x-napbox.seed，环境正常停下时才拍；源环境不用停")
+    var from: String?
 
     func run() throws {
-        let params = ResetParams(target: .currentDirectory, volume: volume)
+        let source = from.map { URL(fileURLWithPath: $0, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardizedFileURL.path }
+        let params = ResetParams(target: .currentDirectory, volumes: volumes, from: source)
         try Output.json(try Output.call(Method.reset, params: try Wire.value(params), as: EnvironmentInfo.self))
     }
 }

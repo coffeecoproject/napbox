@@ -222,10 +222,14 @@ export class NapboxClient {
     });
   }
 
-  reset(target: EnvironmentTarget, volume: string): Promise<EnvironmentInfo> {
+  /**
+   * 换掉数据卷再起环境。不给 from 换成空的；给了 from（一个目录的绝对路径）换成那个目录所在 worktree 的开发环境
+   * 最新快照里的那份（同一个项目，快照要那边声明了 x-napbox.seed），源环境不受影响
+   */
+  reset(target: EnvironmentTarget, volumes: string[], options: { from?: string } = {}): Promise<EnvironmentInfo> {
     return this.exchange({
       method: methods.reset,
-      params: { target, volume },
+      params: { target, volumes, from: options.from },
       result: EnvironmentInfo,
     });
   }

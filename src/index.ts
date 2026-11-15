@@ -31,6 +31,7 @@ export {
   type RunPurpose,
   type RunRecord,
   type RunsResult,
+  type SeedSource,
   type ServiceExit,
   type ServiceExitRestart,
   type ServiceRun,

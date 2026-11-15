@@ -19,6 +19,9 @@ public struct ComposeProject: Codable, Equatable, Sendable {
     /// x-napbox.host_ports：项目在本机上自己跑的进程（开发后台、页面测试起的服务）要的端口名，按写的顺序。
     /// 和服务的端口从同一个范围分、同样固定到 down，但 napboxd 不占着，给项目的进程自己监听。没写是 nil；napbox run 不留
     public var hostPorts: [String]? = nil
+    /// x-napbox.seed：worktree 的开发环境第一次创建时，从主目录环境最新的快照复制过来的命名卷，按名字排好序。
+    /// 声明了的环境每次正常停下时也给这些卷拍快照，给别的 worktree 用。没写是 nil；napbox run 不留
+    public var seed: [String]? = nil
 
     public func service(_ name: String) -> Service? { services.first { $0.name == name } }
 

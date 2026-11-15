@@ -456,6 +456,31 @@ extension [ComposeIssue] {
         #expect(try issues(["compose.yaml": "x-napbox: {host_ports: {a: 1}}\nservices:\n  a: {image: alpine}\n"]).mentions("x-napbox.host_ports：要是列表"))
     }
 
+    /// x-napbox.seed：只能列顶层声明的命名卷，按名字排序；不认识、重复的报错；run 不留；没写的定义和原来一样
+    @Test func seed() throws {
+        let files = ["compose.yaml": """
+        x-napbox:
+          seed: [s3data, pgdata]
+        services:
+          db: {image: postgres, volumes: ["pgdata:/var/lib/postgresql/data", "s3data:/s3"]}
+        volumes: {pgdata: {}, s3data: {}, redis: {}}
+        """]
+        #expect(try load(files).seed == ["pgdata", "s3data"])
+        #expect(try load(files, run: ComposeRun(service: "db")).seed == nil, "run 不从快照复制")
+        #expect(try load(["compose.yaml": "services:\n  a: {image: alpine}\n"]).seed == nil)
+
+        let found = try issues(["compose.yaml": """
+        x-napbox:
+          seed: [pgdata, nope, pgdata]
+        services:
+          a: {image: alpine, volumes: ["pgdata:/data"]}
+        volumes: {pgdata: {}}
+        """])
+        #expect(found.count == 2)
+        #expect(found.mentions("x-napbox.seed.nope：不是顶层声明的命名卷"))
+        #expect(found.mentions("x-napbox.seed.pgdata：重复了"))
+    }
+
     /// 本机进程的端口变量：compose 里哪里引用都报错（环境里访问不到本机），调用方环境里有同名变量也不拿来用；
     /// 服务叫 host 时它自己的端口变量照常
     @Test func hostPortVariablesCannotBeReferenced() throws {

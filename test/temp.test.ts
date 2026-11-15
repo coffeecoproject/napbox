@@ -254,7 +254,7 @@ describe("临时环境", { concurrency: false }, () => {
 
   test("临时环境没有 sleep、reset；名字写得不对报 bad_request", async () => {
     await rejectsWithCode(client.sleep({ cwd, temp: "t1" }), "bad_request");
-    await rejectsWithCode(client.reset({ cwd, temp: "t1" }, "data"), "bad_request");
+    await rejectsWithCode(client.reset({ cwd, temp: "t1" }, ["data"]), "bad_request");
     assert.equal((await client.environment({ cwd, temp: "t1" })).state, "running");
     assert.equal((await cli(cwd, ["exec", "--temp", "t1", "db", "--", "cat", "/data/who"])).stdout.toString(), "在-t1\n");
     for (const temp of ["T1", "a/b", "-x", ""]) {

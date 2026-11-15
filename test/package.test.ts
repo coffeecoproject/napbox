@@ -231,7 +231,7 @@ test("up 起真实环境，端口能连，env、exec、logs、reset 都能用", 
   assert.ok(logs.value.logs.includes("started-web"));
 
   await client.tool("exec", { directory: project, service: "web", command: ["sh", "-c", "echo keep > /data/f"] });
-  const reset = await client.tool("reset", { directory: project, volume: "data" });
+  const reset = await client.tool("reset", { directory: project, volumes: ["data"] });
   assert.equal(reset.isError, false, JSON.stringify(reset.value));
   const after = await client.tool("exec", { directory: project, service: "web", command: ["sh", "-c", "ls /data/f 2>&1 || true"] });
   assert.ok(after.value.stdout.includes("No such file"));

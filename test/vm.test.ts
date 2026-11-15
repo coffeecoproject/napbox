@@ -494,8 +494,8 @@ describe("调用方持有的环境", { concurrency: false }, () => {
 
   test("reset：数据卷清空，运行记录 purpose 是 reset；没有这个卷报 volume_not_found", async () => {
     await run("app", ["touch", "/data/keep"]);
-    await rejectsWithCode(client.reset(target, "nope"), "volume_not_found");
-    const info = await client.reset(target, "data");
+    await rejectsWithCode(client.reset(target, ["nope"]), "volume_not_found");
+    const info = await client.reset(target, ["data"]);
     assert.equal(info.state, "running");
     assert.equal((await run("app", ["test", "-e", "/data/keep"])).exitCode, 1);
     assert.equal((await client.runs(target)).runs.at(-1)?.purpose, "reset");
@@ -1948,7 +1948,7 @@ volumes:
     await sh("seeded", "find /opt -mindepth 1 -delete");
     await client.sleep(target);
     assert.deepEqual(await entries("seeded", "/opt"), []);
-    await client.reset(target, "yarn");
+    await client.reset(target, ["yarn"]);
     assert.deepEqual(await listing("seeded", "/opt"), await listing("plain", "/opt"));
     // 别的卷没有跟着重新带
     assert.ok((await entries("seeded", "/home/node")).includes("mine"));
@@ -2271,5 +2271,112 @@ describe("端口转发", { concurrency: false }, () => {
     for (const socket of sockets) socket.destroy();
     await client.wake(target);
     assert.match((await readAll(8081)).toString(), /^10\.88\.0\.1$/);
+  });
+});
+
+describe("数据快照（x-napbox.seed）", { concurrency: false }, () => {
+  // app 收到 TERM 马上退出：服务都按时退出、sync 成功才算正常停下，才拍快照
+  const compose = `x-napbox: {seed: [data]}
+services:
+  init:
+    image: alpine:3.20
+    volumes: ["data:/data"]
+    command: ["sh", "-c", "echo run >> /data/init-runs; sync"]
+  app:
+    image: alpine:3.20
+    volumes: ["data:/data"]
+    command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 0.2 & wait; done"]
+    stop_grace_period: 1s
+volumes:
+  data:
+`;
+  const main = repo("seed/main", compose);
+  const git = (...args: string[]) => execFileSync("git", ["-C", main, "-c", "user.name=t", "-c", "user.email=t@t", ...args]);
+  git("add", "compose.yaml");
+  git("commit", "-qm", "x");
+  const branch = path.join(work, "seed/branch");
+  const later = path.join(work, "seed/later");
+  git("worktree", "add", "-q", "-b", "branch", branch);
+  git("worktree", "add", "-q", "-b", "later", later);
+  const lonely = repo("seed/lonely", compose);
+  execFileSync("git", ["-C", lonely, "add", "compose.yaml"]);
+  execFileSync("git", ["-C", lonely, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
+  const lonelyBranch = path.join(work, "seed/lonely-branch");
+  execFileSync("git", ["-C", lonely, "worktree", "add", "-q", "-b", "b", lonelyBranch]);
+  let daemon: Daemon;
+  let client: NapboxClient;
+  const at = (cwd: string): EnvironmentTarget => ({ cwd });
+  const read = async (cwd: string) => (await execIn(client, at(cwd), "app", ["cat", "/data/v"])).stdout;
+  const write = async (cwd: string, text: string) =>
+    assert.equal((await execIn(client, at(cwd), "app", ["sh", "-c", `echo ${text} > /data/v; sync`])).exitCode, 0);
+
+  before(async () => {
+    daemon = await startDaemon(support, log);
+    client = daemon.client;
+  });
+
+  after(async () => {
+    for (const cwd of [branch, later, main]) await client.down(at(cwd)).catch(() => {});
+    await daemon.stop("SIGTERM");
+  });
+
+  test("主目录没有环境、还没正常停下过：新 worktree 报 snapshot_not_found，不登记", async () => {
+    await rejectsWithCode(client.up({ cwd: lonelyBranch, environment: {} }), "snapshot_not_found");
+    await rejectsWithCode(client.environment(at(lonelyBranch)), "environment_not_found");
+    await client.up({ cwd: main, environment: {} });
+    await write(main, "v1");
+    await rejectsWithCode(client.up({ cwd: branch, environment: {} }), "snapshot_not_found");
+  });
+
+  test("主目录正常停下拍了快照；运行中再改，新 worktree 拿到的是快照时的数据，主目录没被打断", async () => {
+    await client.sleep(at(main));
+    await client.up({ cwd: main, environment: {} });
+    await write(main, "v2");
+    const runsBefore = (await client.runs(at(main))).runs.length;
+    const info = await client.up({ cwd: branch, environment: {} });
+    assert.equal(info.seededFrom?.environment, (await client.environment(at(main))).name);
+    assert.deepEqual(info.seededFrom?.volumes, ["data"]);
+    assert.equal(await read(branch), "v1\n");
+    const run = (await client.runs(at(branch))).runs.at(-1);
+    assert.equal(run?.purpose, "up");
+    assert.equal(run?.seededFrom?.environment, info.seededFrom?.environment);
+    // 一次性服务在复制来的数据上又跑了一次
+    assert.equal((await execIn(client, at(branch), "app", ["cat", "/data/init-runs"])).stdout, "run\nrun\n");
+    // 主目录全程在跑：没有新的启动记录，数据是它自己的
+    assert.equal((await client.environment(at(main))).state, "running");
+    assert.equal((await client.runs(at(main))).runs.length, runsBefore);
+    assert.equal(await read(main), "v2\n");
+  });
+
+  test("两边各写各的；再 up 不再复制", async () => {
+    await write(branch, "branch");
+    assert.equal(await read(main), "v2\n");
+    const again = await client.up({ cwd: branch, environment: {} });
+    assert.equal(again.seededFrom, undefined);
+    assert.equal(await read(branch), "branch\n");
+  });
+
+  test("reset --from：换成主目录最新的快照，旧卷进 recycled；不带 from 是换成空的", async () => {
+    await client.sleep(at(main)); // 拍下 v2
+    await rejectsWithCode(client.reset(at(branch), ["data"], { from: branch }), "bad_request");
+    await rejectsWithCode(client.reset(at(branch), ["nope"], { from: main }), "volume_not_found");
+    const info = await client.reset(at(branch), ["data"], { from: main });
+    assert.deepEqual(info.seededFrom?.volumes, ["data"]);
+    assert.equal(await read(branch), "v2\n");
+    assert.equal((await client.runs(at(branch))).runs.at(-1)?.purpose, "reset");
+    assert.equal((await client.environment(at(main))).state, "sleeping", "复制不唤醒源环境");
+    await client.reset(at(branch), ["data"]);
+    assert.equal((await execIn(client, at(branch), "app", ["test", "-e", "/data/v"])).exitCode, 1);
+  });
+
+  test("没正常停下（napboxd 被强杀）不拍快照，留着上一份", async () => {
+    await client.up({ cwd: main, environment: {} });
+    await write(main, "v3");
+    await daemon.stop("SIGKILL");
+    daemon = await startDaemon(support, log);
+    client = daemon.client;
+    const info = await client.up({ cwd: later, environment: {} });
+    assert.ok(info.seededFrom);
+    assert.equal(await read(later), "v2\n");
   });
 });

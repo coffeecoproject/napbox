@@ -101,6 +101,8 @@ public enum ErrorCode: String, Sendable {
     case serviceFailed = "service_failed"
     case serviceNotFound = "service_not_found"
     case volumeNotFound = "volume_not_found"
+    /// 要从别的环境复制数据（x-napbox.seed、reset --from），但它还没有快照，或者快照里没有要的卷
+    case snapshotNotFound = "snapshot_not_found"
     case healthcheckTimeout = "healthcheck_timeout"
     case addressUnavailable = "address_unavailable"
     /// 调用方创建的环境名已经被别的持有方或别的目录用了
@@ -188,9 +190,12 @@ public struct EnvironmentInfo: Codable, Sendable {
     public var serviceExits: [ServiceExit]
     /// develop.watch 最近一次同步或重建失败的原因（这时跑的可能还是旧代码），下次成功后清掉
     public var watchError: String?
+    /// 只在这次 up、reset 起环境之前从别的环境的快照复制了数据时才有：数据是哪个环境、什么时候的
+    public var seededFrom: SeedSource?
 
     public init(name: String, owner: String?, state: EnvironmentState, worktree: String, ports: [PortInfo], hostPorts: [HostPortInfo], egress: EgressMode,
-                variables: [String: String], unsetVariables: [String], lastError: String? = nil, serviceExits: [ServiceExit] = [], watchError: String? = nil) {
+                variables: [String: String], unsetVariables: [String], lastError: String? = nil, serviceExits: [ServiceExit] = [], watchError: String? = nil,
+                seededFrom: SeedSource? = nil) {
         self.name = name
         self.owner = owner
         self.state = state
@@ -203,6 +208,23 @@ public struct EnvironmentInfo: Codable, Sendable {
         self.lastError = lastError
         self.serviceExits = serviceExits
         self.watchError = watchError
+        self.seededFrom = seededFrom
+    }
+}
+
+/// 从哪个环境的快照复制了哪些数据卷（x-napbox.seed、reset --from）
+public struct SeedSource: Codable, Sendable, Equatable {
+    /// 源环境名，比如 crocwork/main
+    public var environment: String
+    /// 快照是什么时候拍的（源环境那次正常停下的时间）：数据就是那时的
+    public var takenAt: Date
+    /// 复制了哪些卷，按名字排序
+    public var volumes: [String]
+
+    public init(environment: String, takenAt: Date, volumes: [String]) {
+        self.environment = environment
+        self.takenAt = takenAt
+        self.volumes = volumes
     }
 }
 
@@ -403,11 +425,15 @@ public struct ServiceExit: Codable, Sendable {
 
 public struct ResetParams: Codable, Sendable {
     public var target: EnvironmentTarget
-    public var volume: String
+    /// 要换掉的数据卷，至少一个
+    public var volumes: [String]
+    /// 不是 nil 时换成这个目录所在 worktree 的开发环境最新快照里的那份（同一个项目），否则换成空的
+    public var from: String?
 
-    public init(target: EnvironmentTarget, volume: String) {
+    public init(target: EnvironmentTarget, volumes: [String], from: String? = nil) {
         self.target = target
-        self.volume = volume
+        self.volumes = volumes
+        self.from = from
     }
 }
 
@@ -567,9 +593,11 @@ public struct RunRecord: Codable, Sendable {
     public var ports: [PortInfo]
     /// 每个服务用的镜像和启动、就绪的时间，按服务名排序；起到一半失败时只有已经走到的部分
     public var services: [ServiceRun]
+    /// 这次起环境之前从别的环境的快照复制了数据（x-napbox.seed、reset --from）时才有
+    public var seededFrom: SeedSource?
 
     public init(id: String, environment: String, purpose: Purpose, startedAt: Date, finishedAt: Date, error: NapboxError?,
-                definitionDigest: String, egress: EgressMode, ports: [PortInfo], services: [ServiceRun]) {
+                definitionDigest: String, egress: EgressMode, ports: [PortInfo], services: [ServiceRun], seededFrom: SeedSource? = nil) {
         self.id = id
         self.environment = environment
         self.purpose = purpose
@@ -580,6 +608,7 @@ public struct RunRecord: Codable, Sendable {
         self.egress = egress
         self.ports = ports
         self.services = services
+        self.seededFrom = seededFrom
     }
 }
 

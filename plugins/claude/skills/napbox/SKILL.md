@@ -40,6 +40,7 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 - **`image_build_failed`**：错误信息里有构建输出的最后几十行和完整日志的路径。修好 Dockerfile 后传 `build: true` 再调 `up`。失败不影响已经在跑的环境。
 - **服务启动前要先建库、建角色、跑迁移**：写成一次性服务（`restart: "no"`，做完就退出），后端用 `depends_on` 的 `condition: service_completed_successfully` 等它跑完。不要让后端连不上就退出、靠 `restart` 重试：napbox 里一个服务按 `restart` 重启，整个环境连数据库一起重启，会一直重来。数据库的 `healthcheck` 要走 TCP（比如 `pg_isready -h 127.0.0.1`），postgres 第一次初始化时只开本地 socket 的临时服务也会让 socket 检查通过。
 - **要清空数据**：`reset` 只清指定的数据卷，旧数据保留 7 天。
+- **分支要主目录的真实数据**（账号、附件，新库只有表登录不了）：不要自己 pg_dump、逐表复制。在 compose 顶层写 `x-napbox: {seed: [pgdata, s3data]}`（列要带过去的命名卷），新 worktree 第一次 `up` 时自动从主目录环境的快照复制这些卷，迁移这类一次性服务在复制来的数据上重跑，`up` 的结果里 `seededFrom` 写着数据是哪个环境、什么时候的。快照是主目录环境正常停下（闲置休眠、`sleep`）时拍的，复制不碰正在运行的主目录，拿到的是它上次停下时的数据。已有环境要换成主目录现在的快照：`reset` 给这些卷、`from` 给主目录的路径。报 `snapshot_not_found` 是主目录还没留下快照：等它闲置休眠；要马上拍就在主目录 `sleep` 一次，但这会断开主目录的连接、结束在跑的命令，先问用户主目录有没有在跑测试。
 - **测试要一套用完就扔的服务**（比如一个空的数据库，以前会用 `docker run` 起）：给 `up` 传 `temp`（自己起个名字）。它在开发环境之外另起一个临时环境，返回它自己的端口；`env`、`logs`、`exec`、`egress` 传同一个 `temp` 就是操作它。用完调 `down` 传同一个 `temp`，数据直接删掉。临时环境不休眠，闲置了自己销毁，也没有 `sleep`、`reset`。
 - **要单独跑一次某个服务**（测试、检查，以前会用 `docker compose run`）：用 `run` 工具。它临时起一个环境、在前台跑这个服务、跑完销毁，返回退出码和输出。
 - **把这两件事写进项目的脚本**：对应的命令行是 `npx napbox up --temp <名字>`、`npx napbox down --temp <名字>` 和 `npx napbox run <服务> [-- 命令]`，`run` 的退出码和那个服务一样。

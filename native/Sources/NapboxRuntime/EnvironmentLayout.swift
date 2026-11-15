@@ -147,8 +147,7 @@ struct EnvironmentLayout: Sendable {
         let path = directory.appending(path: Self.volumePath(name))
         if FileManager.default.fileExists(atPath: path.path) { return path }
         // 新的卷（第一次用，或者 napbox reset 之后）：每个服务都要重新看要不要带镜像内容
-        let services = (try? FileManager.default.contentsOfDirectory(at: directory.appending(path: "populated"), includingPropertiesForKeys: nil)) ?? []
-        for service in services { try? FileManager.default.removeItem(at: service.appending(path: name)) }
+        forgetPopulated(name)
         do {
             let formatter = try EXT4.Formatter(FilePath(path.path), minDiskSize: Self.volumeBytes, journal: Self.journal)
             try formatter.unlink(path: FilePath("/lost+found"))
@@ -168,6 +167,12 @@ struct EnvironmentLayout: Sendable {
 
     func volumePopulated(_ volume: String, service: String) -> Bool {
         FileManager.default.fileExists(atPath: populatedDirectory(service).appending(path: volume).path)
+    }
+
+    /// 卷换成了别的（复制来的）：每个服务都要重新看要不要带镜像内容（卷不是空的就不会带）
+    func forgetPopulated(_ volume: String) {
+        let services = (try? FileManager.default.contentsOfDirectory(at: directory.appending(path: "populated"), includingPropertiesForKeys: nil)) ?? []
+        for service in services { try? FileManager.default.removeItem(at: service.appending(path: volume)) }
     }
 
     func markVolumePopulated(_ volume: String, service: String) throws(NapboxError) {

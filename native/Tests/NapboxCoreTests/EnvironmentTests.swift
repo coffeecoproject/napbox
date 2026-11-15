@@ -155,13 +155,16 @@ import NapboxProtocol
     @Test func pendingOperationRoundTrips() throws {
         var r = record("pawcode/main", project: "pawcode", repo: "/a/Pawcode", worktree: "/a/Pawcode")
         #expect(!String(decoding: try JSONEncoder().encode(r), as: UTF8.self).contains("pending"))
-        for pending: EnvironmentRecord.PendingOperation in [.recycle(reason: "napbox down", discardData: true), .resetVolume("db")] {
+        let seed = SeedSource(environment: "pawcode/other", takenAt: Date(timeIntervalSince1970: 1_800_000_000), volumes: ["db"])
+        for pending: EnvironmentRecord.PendingOperation in [.recycle(reason: "napbox down", discardData: true),
+                                                            .replaceVolumes(volumes: ["db"], seed: seed),
+                                                            .replaceVolumes(volumes: ["db"], seed: nil)] {
             r.pending = pending
             #expect(try JSONDecoder().decode(EnvironmentRecord.self, from: try JSONEncoder().encode(r)) == r)
         }
         // test-native.sh 伪造 state.json 时照这个写法
         let reset = try JSONSerialization.jsonObject(with: try JSONEncoder().encode(r)) as? [String: Any]
-        #expect((reset?["pending"] as? [String: [String: String]]) == ["resetVolume": ["_0": "db"]])
+        #expect((reset?["pending"] as? [String: [String: [String]]]) == ["replaceVolumes": ["volumes": ["db"]]])
     }
 
     @Test func storeRoundTripAndCorruption() throws {
