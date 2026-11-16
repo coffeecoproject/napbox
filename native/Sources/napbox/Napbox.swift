@@ -65,6 +65,7 @@ struct Status: ParsableCommand {
             for p in env.ports { print("  \(p.service):\(p.containerPort)\t\(env.variables[p.variable] ?? "")\t\(p.variable)") }
             for p in env.hostPorts { print("  本机 \(p.name)\t\(p.hostPort)\t\(p.variable)") }
             if let error = env.lastError { print("  最近出错：\(error)") }
+            if let error = env.snapshotError { print("  \(error)") }
         }
     }
 }

@@ -170,6 +170,39 @@ struct SnapshotTests {
         return fm.contents(atPath: url.path).map { String(decoding: $0, as: UTF8.self) }
     }
 
+    /// 源环境最近一次停下没拍成：snapshot_not_found 带上原因，提示先处理再拍；没记原因时照旧
+    @Test func skipReasonInNotFound() throws {
+        let (storage, main, branch) = try setUp()
+        defer { try? fm.removeItem(at: storage.root) }
+        var skipped = main
+        skipped.snapshotSkipped = .init(at: Date(timeIntervalSince1970: 0), reason: "storage（等了 10 秒）过了 stop_grace_period 还没退出")
+        do {
+            _ = try storage.stageSeed(from: skipped, to: branch.id, volumes: ["pg"])
+            Issue.record("没有快照应该报错")
+        } catch {
+            #expect(error.code == "snapshot_not_found")
+            #expect(error.message.contains("最近一次停下（1970-01-01T00:00:00Z）没拍成：storage（等了 10 秒）过了 stop_grace_period 还没退出。"))
+            #expect(error.message.contains("按上面的原因处理好，再拍：在那边 napbox sleep 一次"))
+        }
+        do {
+            _ = try storage.stageSeed(from: main, to: branch.id, volumes: ["pg"])
+            Issue.record("没有快照应该报错")
+        } catch {
+            #expect(!error.message.contains("没拍成"))
+            #expect(error.message.contains("要现在拍：在那边 napbox sleep 一次"))
+        }
+        // 有快照但缺卷：也带上原因
+        try write(storage, main, volume: "pg", "v1")
+        _ = try storage.takeSnapshot(main, project: try project(seed: ["pg"]))
+        do {
+            _ = try storage.stageSeed(from: skipped, to: branch.id, volumes: ["pg", "s3"])
+            Issue.record("缺卷应该报错")
+        } catch {
+            #expect(error.message.contains("里没有 s3"))
+            #expect(error.message.contains("没拍成：storage"))
+        }
+    }
+
     /// 只拍声明了、建过的卷；新的拍完删旧的；之后源再改不影响快照，复制过去的两边各写各的
     @Test func snapshotThenSeed() throws {
         let (storage, main, branch) = try setUp()
@@ -244,5 +277,18 @@ struct SnapshotTests {
         #expect(storage.latestSnapshot(main) != nil)
         #expect(fm.fileExists(atPath: storage.incomingDirectory(environmentID: branch.id).path))
         #expect(!fm.fileExists(atPath: storage.incomingDirectory(environmentID: other.id).path))
+    }
+}
+
+/// 停下的情况：没正常停下时说清是哪一步
+struct StopOutcomeTests {
+    @Test func problem() {
+        #expect(StopOutcome().clean && StopOutcome().problem == nil)
+        let overdue = StopOutcome(overdue: [.init(service: "storage", grace: 10), .init(service: "web", grace: 2.5)])
+        #expect(!overdue.clean)
+        #expect(overdue.problem == "storage（等了 10 秒）、web（等了 2.5 秒）过了 stop_grace_period 还没退出，被强制结束；"
+            + "它们停下要更久的话，在 compose 里给它们设更长的 stop_grace_period")
+        #expect(StopOutcome(syncFailed: true, timeLimit: 73).problem == "存盘（sync）失败；停了 73 秒还没停完，直接关掉了虚拟机")
+        #expect(StopOutcome(vmGone: true).problem == "停之前虚拟机已经不在了")
     }
 }

@@ -68,12 +68,15 @@ extension Storage {
     func stageSeed(from source: EnvironmentRecord, to targetID: String, volumes: [String]) throws(NapboxError) -> SeedSource {
         guard let (dir, info) = latestSnapshot(source) else {
             throw NapboxError(.snapshotNotFound, "环境 \(source.name) 还没有快照：它声明了 x-napbox.seed、正常停下（闲置休眠、napbox sleep、napboxd 退出）时才拍。"
-                + "要现在拍，在那边 napbox sleep 一次——这会断开它的连接、结束在跑的 exec，先确认它没在跑测试")
+                + Self.skipNote(source)
+                + (source.snapshotSkipped == nil ? "要现在拍" : "按上面的原因处理好，再拍")
+                + "：在那边 napbox sleep 一次——这会断开它的连接、结束在跑的 exec，先确认它没在跑测试")
         }
         let missing = volumes.filter { !info.volumes.contains($0) }
         guard missing.isEmpty else {
             throw NapboxError(.snapshotNotFound, "环境 \(source.name) 的快照（\(Self.describe(info.takenAt))）里没有 \(missing.joined(separator: "、"))，"
-                + "只有 \(info.volumes.joined(separator: "、"))。快照只拍源环境 x-napbox.seed 里声明、已经建过的卷，改了声明要等它下次正常停下")
+                + "只有 \(info.volumes.joined(separator: "、"))。快照只拍源环境 x-napbox.seed 里声明、已经建过的卷，改了声明要等它下次正常停下。"
+                + Self.skipNote(source))
         }
         let incoming = incomingDirectory(environmentID: targetID)
         let fm = FileManager.default
@@ -145,5 +148,11 @@ extension Storage {
 
     static func describe(_ date: Date) -> String {
         ISO8601DateFormatter().string(from: date)
+    }
+
+    /// 源环境最近一次停下没拍成快照时的说明，接在 snapshot_not_found 后面；没有是空的
+    static func skipNote(_ source: EnvironmentRecord) -> String {
+        guard let skip = source.snapshotSkipped else { return "" }
+        return "它最近一次停下（\(describe(skip.at))）没拍成：\(skip.reason)。"
     }
 }

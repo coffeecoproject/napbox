@@ -2303,6 +2303,21 @@ volumes:
   execFileSync("git", ["-C", lonely, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
   const lonelyBranch = path.join(work, "seed/lonely-branch");
   execFileSync("git", ["-C", lonely, "worktree", "add", "-q", "-b", "b", lonelyBranch]);
+  // app 在 /data/slow 存在时不理 TERM，过了 stop_grace_period 被强制结束：这次停下不算正常
+  const slow = repo("seed/slow", `x-napbox: {seed: [data]}
+services:
+  app:
+    image: alpine:3.20
+    volumes: ["data:/data"]
+    command: ["sh", "-c", "trap 'test -e /data/slow || exit 0' TERM; while true; do sleep 0.2 & wait; done"]
+    stop_grace_period: 1s
+volumes:
+  data:
+`);
+  execFileSync("git", ["-C", slow, "add", "compose.yaml"]);
+  execFileSync("git", ["-C", slow, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"]);
+  const slowBranch = path.join(work, "seed/slow-branch");
+  execFileSync("git", ["-C", slow, "worktree", "add", "-q", "-b", "b", slowBranch]);
   let daemon: Daemon;
   let client: NapboxClient;
   const at = (cwd: string): EnvironmentTarget => ({ cwd });
@@ -2316,7 +2331,7 @@ volumes:
   });
 
   after(async () => {
-    for (const cwd of [branch, later, main]) await client.down(at(cwd)).catch(() => {});
+    for (const cwd of [branch, later, main, slowBranch, slow]) await client.down(at(cwd)).catch(() => {});
     await daemon.stop("SIGTERM");
   });
 
@@ -2378,5 +2393,20 @@ volumes:
     const info = await client.up({ cwd: later, environment: {} });
     assert.ok(info.seededFrom);
     assert.equal(await read(later), "v2\n");
+  });
+
+  test("服务过了 stop_grace_period 没退出：不拍快照，status 和 snapshot_not_found 写着是哪个服务；正常停下一次就清掉", async () => {
+    await client.up({ cwd: slow, environment: {} });
+    assert.equal((await execIn(client, at(slow), "app", ["sh", "-c", "touch /data/slow; sync"])).exitCode, 0);
+    await client.sleep(at(slow));
+    assert.match((await client.environment(at(slow))).snapshotError ?? "", /没拍快照：app（等了 1 秒）过了 stop_grace_period/);
+    const refused = await rejectsWithCode(client.up({ cwd: slowBranch, environment: {} }), "snapshot_not_found");
+    assert.match(refused.message, /没拍成：app（等了 1 秒）过了 stop_grace_period.*按上面的原因处理好/s);
+
+    await client.up({ cwd: slow, environment: {} });
+    assert.equal((await execIn(client, at(slow), "app", ["sh", "-c", "rm /data/slow; sync"])).exitCode, 0);
+    await client.sleep(at(slow));
+    assert.equal((await client.environment(at(slow))).snapshotError, undefined);
+    assert.ok((await client.up({ cwd: slowBranch, environment: {} })).seededFrom);
   });
 });

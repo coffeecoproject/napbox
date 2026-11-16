@@ -110,6 +110,8 @@ export const EnvironmentInfo = z.object({
   unsetVariables: z.array(z.string()),
   lastError: z.string().optional(),
   watchError: z.string().optional(),
+  /** 声明了 x-napbox.seed 的开发环境，最近一次停下没拍成快照的说明；下次拍成了就没有 */
+  snapshotError: z.string().optional(),
   serviceExits: z.array(ServiceExit),
   /** 只在这次 up、reset 起环境之前从别的环境的快照复制了数据时才有 */
   seededFrom: SeedSource.optional(),
