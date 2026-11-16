@@ -223,8 +223,8 @@ extension Daemon {
     /// （它们可能在 up 返回之后才结束），唤醒时就不再启动它们。端口监听不动，有连接进来会再唤醒。
     /// - sleep：这次是休眠时给原因，停完发事件。重启、回收的停是中间步骤，不算休眠，由它们自己发事件
     /// - keepCompleted：false 是定义已经换了，这个环境跑完的一次性服务不再算数
-    /// - snapshot：正常停下后给 x-napbox.seed 声明的卷拍快照。回收时不拍，环境要没了。
-    ///   数据留着的停（不是回收）没正常停下时，日志写明是哪一步（哪个服务超时、存盘失败等）
+    /// - snapshot：正常停下后给 x-napbox.seed 声明的卷拍快照。回收时不拍，环境要没了
+    /// 没正常停下时日志写明是哪一步（哪个服务超时、存盘失败等）
     func stopRunning(_ name: String, sleep: EnvironmentEvent.SleepReason? = nil, keepCompleted: Bool = true, snapshot: Bool = true) async {
         guard let env = running.removeValue(forKey: name) else { return }
         await stopWatching(name)
@@ -232,10 +232,8 @@ extension Daemon {
         if keepCompleted { await saveCompleted(name, env) }
         let stoppedAt = Date()
         let outcome = await env.stop()
-        if snapshot {
-            if let problem = outcome.problem { print("环境 \(name) 没有正常停下：\(problem)") }
-            takeSnapshot(name, outcome: outcome, stoppedAt: stoppedAt)
-        }
+        if let problem = outcome.problem { print("环境 \(name) 没有正常停下：\(problem)") }
+        if snapshot { takeSnapshot(name, outcome: outcome, stoppedAt: stoppedAt) }
         if let sleep { emit(name, .slept) { $0.sleepReason = sleep } }
     }
 

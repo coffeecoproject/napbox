@@ -160,7 +160,7 @@ actor Daemon {
             unsetVariables: record.definition?.unsetVariables ?? [],
             lastError: sessions[record.name]?.lastFailure?.message, serviceExits: sessions[record.name]?.exits ?? [],
             watchError: sessions[record.name]?.watchError,
-            snapshotError: record.snapshotSkipped.map { "上次停下（\(ISO8601DateFormatter().string(from: $0.at))）没拍快照：\($0.reason)" }
+            snapshotError: record.snapshotSkipped?.summary
         )
     }
 

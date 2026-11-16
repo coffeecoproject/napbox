@@ -2399,9 +2399,9 @@ volumes:
     await client.up({ cwd: slow, environment: {} });
     assert.equal((await execIn(client, at(slow), "app", ["sh", "-c", "touch /data/slow; sync"])).exitCode, 0);
     await client.sleep(at(slow));
-    assert.match((await client.environment(at(slow))).snapshotError ?? "", /没拍快照：app（等了 1 秒）过了 stop_grace_period/);
+    assert.match((await client.environment(at(slow))).snapshotError ?? "", /没拍成快照：app（等了 1 秒）过了 stop_grace_period/);
     const refused = await rejectsWithCode(client.up({ cwd: slowBranch, environment: {} }), "snapshot_not_found");
-    assert.match(refused.message, /没拍成：app（等了 1 秒）过了 stop_grace_period.*按上面的原因处理好/s);
+    assert.match(refused.message, /没拍成快照：app（等了 1 秒）过了 stop_grace_period.*按上面的原因处理好/s);
 
     await client.up({ cwd: slow, environment: {} });
     assert.equal((await execIn(client, at(slow), "app", ["sh", "-c", "rm /data/slow; sync"])).exitCode, 0);

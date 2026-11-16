@@ -31,13 +31,13 @@ public struct StopOutcome: Sendable, Equatable {
 
     public var clean: Bool { problem == nil }
 
-    /// 没正常停下的原因，一句话；正常停下是 nil。服务超时的带上改法
+    /// 没正常停下的原因，一句话；正常停下是 nil。服务超时的带上怎么查
     public var problem: String? {
         var parts: [String] = []
         if vmGone { parts.append("停之前虚拟机已经不在了") }
         if !overdue.isEmpty {
             let list = overdue.map { "\($0.service)（等了 \(Self.seconds($0.grace))）" }.joined(separator: "、")
-            parts.append("\(list)过了 stop_grace_period 还没退出，被强制结束；它们停下要更久的话，在 compose 里给它们设更长的 stop_grace_period")
+            parts.append("\(list)过了 stop_grace_period 还没退出，被强制结束；先看服务日志里停下那段为什么慢，确实要这么久的再在 compose 里设更长的 stop_grace_period")
         }
         if syncFailed { parts.append("存盘（sync）失败") }
         if let timeLimit { parts.append("停了 \(Self.seconds(timeLimit))还没停完，直接关掉了虚拟机") }

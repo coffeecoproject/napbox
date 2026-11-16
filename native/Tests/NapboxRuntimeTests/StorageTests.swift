@@ -181,7 +181,7 @@ struct SnapshotTests {
             Issue.record("没有快照应该报错")
         } catch {
             #expect(error.code == "snapshot_not_found")
-            #expect(error.message.contains("最近一次停下（1970-01-01T00:00:00Z）没拍成：storage（等了 10 秒）过了 stop_grace_period 还没退出。"))
+            #expect(error.message.contains("最近一次停下（1970-01-01T00:00:00Z）没拍成快照：storage（等了 10 秒）过了 stop_grace_period 还没退出。"))
             #expect(error.message.contains("按上面的原因处理好，再拍：在那边 napbox sleep 一次"))
         }
         do {
@@ -199,7 +199,7 @@ struct SnapshotTests {
             Issue.record("缺卷应该报错")
         } catch {
             #expect(error.message.contains("里没有 s3"))
-            #expect(error.message.contains("没拍成：storage"))
+            #expect(error.message.contains("没拍成快照：storage"))
         }
     }
 
@@ -287,7 +287,7 @@ struct StopOutcomeTests {
         let overdue = StopOutcome(overdue: [.init(service: "storage", grace: 10), .init(service: "web", grace: 2.5)])
         #expect(!overdue.clean)
         #expect(overdue.problem == "storage（等了 10 秒）、web（等了 2.5 秒）过了 stop_grace_period 还没退出，被强制结束；"
-            + "它们停下要更久的话，在 compose 里给它们设更长的 stop_grace_period")
+            + "先看服务日志里停下那段为什么慢，确实要这么久的再在 compose 里设更长的 stop_grace_period")
         #expect(StopOutcome(syncFailed: true, timeLimit: 73).problem == "存盘（sync）失败；停了 73 秒还没停完，直接关掉了虚拟机")
         #expect(StopOutcome(vmGone: true).problem == "停之前虚拟机已经不在了")
     }

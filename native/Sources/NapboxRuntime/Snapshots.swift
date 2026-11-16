@@ -153,6 +153,6 @@ extension Storage {
     /// 源环境最近一次停下没拍成快照时的说明，接在 snapshot_not_found 后面；没有是空的
     static func skipNote(_ source: EnvironmentRecord) -> String {
         guard let skip = source.snapshotSkipped else { return "" }
-        return "它最近一次停下（\(describe(skip.at))）没拍成：\(skip.reason)。"
+        return "\(skip.summary)。"
     }
 }

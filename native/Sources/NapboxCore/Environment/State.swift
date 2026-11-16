@@ -111,6 +111,9 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
             self.at = at
             self.reason = reason
         }
+
+        /// 给人看的一句，status 的 snapshotError 和 snapshot_not_found 都用它
+        public var summary: String { "最近一次停下（\(ISO8601DateFormatter().string(from: at))）没拍成快照：\(reason)" }
     }
 
     /// 要分几步、中途停下会留下半截状态的操作
