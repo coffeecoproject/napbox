@@ -25,14 +25,42 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 - `ports` 只写容器端口（`- "5432"`），不写宿主机端口，宿主机端口由 napbox 分配。
 - 程序从环境变量读服务的地址和端口，不给默认端口；没设就报错退出。启动脚本、测试脚本从 `npx napbox up` 或 `npx napbox env` 的 JSON 里取地址，传给程序。
 - 建库、建角色、跑迁移写成一次性服务，见下面「服务启动前要先建库」。
-- 脚本里不调 `docker`：要用完就扔的库用 `npx napbox up --temp`，要单独跑一次某个服务用 `npx napbox run`。README 里写这些命令，不写 `docker compose`。
+- 脚本里不调 `docker`，也不调苹果的 `container` 这类别的容器工具：要用完就扔的库用 `npx napbox up --temp`，要单独跑一次某个服务用 `npx napbox run`。README 里写这些命令，不写 `docker compose`。
 - 只用 napbox 支持的写法：不写 `read_only`、`cpus`、`pids_limit`、`security_opt`、`platform`；镜像和 Dockerfile 的 `FROM` 用公开仓库能拉到的。自己写的 compose 报 `compose_unsupported` 时，按错误信息改掉。
+
+## 网页页面测试（端到端、截图对比）
+
+被测的服务、网页和浏览器都放进 napbox 的环境，本机只跑测试运行器（Playwright）。不用本机装的 Chrome，也不用别的容器工具起浏览器。
+
+- **被测的那一套和线上一样组装**：入口代理、构建好的前后端都写成 compose 服务，页面测试连这一套，不连开发服务器。
+- **每个 worker 一套临时环境**：测试脚本按 worker 数起 `npx napbox up --temp e2e-<编号>`，跑完 `npx napbox down --temp e2e-<编号>`。各套有自己的数据库，并行互不干扰。
+- **浏览器是环境里的一个服务**，跑 Playwright 自带的 `run-server`，用的是项目自己装好的 Playwright（把仓库目录只读挂进去，pnpm 的软链接、monorepo 子目录里的依赖都能解析）：
+
+  ```yaml
+  browser:
+    image: mcr.microsoft.com/playwright:v1.60.0-noble   # 和项目装的 Playwright 同一版本
+    init: true
+    shm_size: 1g
+    volumes:
+      - .:/work:ro   # 仓库根目录；compose 在子目录里就写 ..
+    command: ["node", "/work/node_modules/@playwright/test/cli.js", "run-server", "--port", "3000", "--host", "0.0.0.0"]
+    ports: ["3000"]
+  ```
+
+  `cli.js` 的路径按项目里装 Playwright 的位置写（monorepo 里可能在 `e2e/node_modules` 下，只装了 `playwright` 的就是 `node_modules/playwright/cli.js`）。
+- **本机的测试运行器连它**：Playwright 配置里 `use.connectOptions.wsEndpoint` 设成 `ws://` 加这套环境的 `NAPBOX_BROWSER_3000`，每个 worker 连自己那套环境的浏览器。
+- **页面地址写服务名**：浏览器在环境里，`baseURL` 写 `http://gateway:8080` 这类服务名加容器端口，不写 napbox 分给本机的端口。
+- **测试里直接调接口**（比如准备数据）：`page.request`、`context.request` 由环境里的浏览器发，照样用服务名。Playwright 的 `request` 夹具和 `request.newContext()` 在本机发请求，认不得服务名（报 `socket hang up`），要给它单独传本机地址（这套环境的 `NAPBOX_<服务>_<端口>`）。
+- **版本要一致**：镜像 tag 和项目装的 Playwright 同一版本，镜像里的浏览器是按版本配的，不一致时报找不到浏览器；测试运行器和浏览器服务的 Playwright 版本不同时，一连就报 `Playwright version mismatch`。升级 Playwright 时一起改镜像 tag。
+- **上传、下载、截图、trace 照常用**：`setInputFiles` 传本机的文件，下载 `saveAs`、截图、trace 都写在本机的输出目录。没有有头的窗口，失败了看 trace（`npx playwright show-trace`），不要为了看窗口改回本机浏览器。
+- **截图对比的基准图用环境里这个浏览器拍**（Linux、arm64），镜像或 Playwright 版本变了要重拍。
+- **要确认页面不依赖外网**：起好临时环境后调 `egress`，传 `none` 和同一个 `temp`（脚本里是 `npx napbox egress none --temp <名字>`），外网请求直接失败，环境里的服务照常能访问。
 
 ## 常见情况
 
 - **前端、小程序、App 要连环境里的后端**：它们跑在本机，不在环境里，后端地址要由项目的启动脚本交给它们。脚本从 `npx napbox up` 返回的 JSON（或 `npx napbox env`）里取出后端的地址：网页前端（vite 这类）用环境变量传进去；读不到环境变量的（微信小程序、手机 App）由脚本生成一份本地配置文件，加进 `.gitignore`，不提交。缺这份文件时明确报错、提示先运行启动脚本，不要悄悄回退到原来的地址。这份文件是端口的副本：项目回收环境的命令要一起删掉它，项目说明里写明起停环境用项目的脚本（直接调 napbox 的 `up`、`down` 不会更新它）。单元测试自己给一个固定地址，不依赖这份文件。不要为了凑回原来的端口去改 compose。
 - **环境里的服务要知道自己在宿主机上的地址**（比如服务端生成给浏览器、小程序打开的图片链接）：在 compose 的 `environment` 或 `env_file` 里写 `PUBLIC_ORIGIN: http://${NAPBOX_API_3100}`，起服务时换成这个环境分到的地址。只能用在这两处，引用的要是这个 compose 里启用的服务在 `ports` 里写的端口；不要让启动脚本先 up 一次取端口再 up 一次。
-- **项目自己在本机跑的程序要监听端口**（开发后台、页面测试起的后台和网页，不在 compose 里）：不要写死端口，也不要自己按目录算一组。在 compose 顶层写 `x-napbox: {host_ports: [server, web]}`，`up` 返回的变量里（或 `npx napbox env`）有 `NAPBOX_HOST_SERVER`，值是端口号，启动脚本把它交给程序（比如写进 `.env`）。每个 worktree 一组，固定到 `down`。napbox 不占着这些端口，程序自己监听；启动时报端口被占，是别的程序抢先占了，停掉它或者 `down` 后重新 `up` 换一组。名字用小写字母、数字和下划线，不能以 `_数字` 结尾（要编号写成 `worker2`）。compose 里不能引用 `${NAPBOX_HOST_…}`：环境里访问不到本机。
+- **项目自己在本机跑的程序要监听端口**（开发时在本机跑的后台和网页，不在 compose 里；页面测试的不算，见上面「网页页面测试」）：不要写死端口，也不要自己按目录算一组。在 compose 顶层写 `x-napbox: {host_ports: [server, web]}`，`up` 返回的变量里（或 `npx napbox env`）有 `NAPBOX_HOST_SERVER`，值是端口号，启动脚本把它交给程序（比如写进 `.env`）。每个 worktree 一组，固定到 `down`。napbox 不占着这些端口，程序自己监听；启动时报端口被占，是别的程序抢先占了，停掉它或者 `down` 后重新 `up` 换一组。名字用小写字母、数字和下划线，不能以 `_数字` 结尾（要编号写成 `worker2`）。compose 里不能引用 `${NAPBOX_HOST_…}`：环境里访问不到本机。
 - **compose 文件不在默认位置**：给 `up` 传 `files`，或者在 worktree 根目录写 `.napbox.yaml`，内容是 `compose: server/compose.yaml`。
 - **改了 compose**：再调一次 `up`，会按新定义重建。
 - **改了 Dockerfile 或打进镜像的文件**：给 `up` 传 `build: true`，和 `docker compose up --build` 一样。不传时只在镜像还没有时构建。源码挂载进容器的文件不用重新构建。
