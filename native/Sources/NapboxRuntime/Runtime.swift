@@ -25,6 +25,13 @@ public actor Runtime {
     /// 每个虚拟机除了各服务那一份内存（Service.memoryShareBytes）之外，多给的部分（虚拟机本身约 290MB，再加网络小容器）
     static let vmOverheadBytes: UInt64 = 512 * 1024 * 1024
 
+    /// 虚拟机的内核：框架默认的启动参数，再打开内存压力统计（PSI）。这个内核编进了它，但默认关着；网络小容器靠它看出哪个服务卡在内存上
+    static func kernel(_ path: URL) -> Kernel {
+        var kernel = Kernel(path: path, platform: .linuxArm)
+        kernel.commandLine.kernelArgs.append("psi=1")
+        return kernel
+    }
+
     public init(supportDirectory: URL, guardBinary: URL) {
         self.supportDirectory = supportDirectory
         storage = Storage(root: supportDirectory)
@@ -78,7 +85,8 @@ public actor Runtime {
             // Containerization 的 stop 发现它不在运行就直接报错，这组线程和文件句柄永远留着（实测每次崩溃留下 18 个线程、18 个句柄）
             // rosetta：镜像是 arm64 的、里面的程序是 x86 的（比如 Dockerfile 里写死 GOARCH=amd64），Docker Desktop 里能跑，
             // 这里也要能跑。虚拟机启动时把 Rosetta 挂进去，登记成 x86 程序的解释器，对虚拟机里所有容器生效
-            let vmm = VZVirtualMachineManager(kernel: Kernel(path: kernel, platform: .linuxArm), initialFilesystem: initfs,
+            let vmm = VZVirtualMachineManager(kernel: Self.kernel(kernel),
+                                              initialFilesystem: initfs,
                                               rosetta: true,
                                               group: MultiThreadedEventLoopGroup.singleton)
             return (store, vmm)
@@ -276,7 +284,7 @@ public actor Runtime {
                 let sources = GuardContainer.sources(project)
                 c.mounts = LinuxContainer.defaultMounts() + sources.directories.enumerated().map {
                     .share(source: $1, destination: "/napbox-src/\($0)", options: [])
-                } + GuardContainer.populateMounts(project) + [GuardContainer.vmProcMount]
+                } + GuardContainer.populateMounts(project) + [GuardContainer.vmProcMount, GuardContainer.vmCgroupMount]
                 // 只是上限，用多少才占多少。所有转发的连接都经过它（guard/mux.go），每条空闲连接约 25KB，
                 // 忙的连接最多再加额度那么多。超过上限它会被杀，环境转成休眠（watchGuard）
                 c.memoryInBytes = 256 * 1024 * 1024

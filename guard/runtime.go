@@ -27,6 +27,8 @@ const (
 	runtimeProgram = "napbox-runc"
 	// 网络小容器的名字，和 napboxd 的 GuardContainer.name 一致
 	guardContainer = "napbox-guard"
+	// 只为放 runc 那块盘的容器（不启动），和 napboxd 的 RuntimeContainer.name 一致
+	runtimeContainer = "napbox-runtime"
 )
 
 // runc 自己失败了：它已经把原因写进日志，这里只把退出码带回去

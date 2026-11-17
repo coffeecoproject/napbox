@@ -228,6 +228,7 @@ public actor RunningEnvironment {
         try await writeSysctl(settings)
         try await startContainer(GuardContainer.name)
         watchGuard()
+        watchMemory()
         try await applyEgress(egress)
         try startSourceEvents(project)
         // 每个服务一启动就开始判断它自己就绪没有，各查各的：先起好的（比如数据库）马上算就绪，
@@ -317,6 +318,37 @@ public actor RunningEnvironment {
             guard (try? await pod.waitContainer(GuardContainer.name)) != nil else { return }
             await self?.recordVMLost()
         })
+    }
+
+    /// 收网络小容器报来的卡在内存上的服务（MemoryStall）：结束它说的那个进程，写进相关服务的日志。
+    /// 连接在虚拟机停了时断开，循环随之结束；连不上（网络小容器刚起来还没开始听）隔一秒再连。
+    private func watchMemory() {
+        let pod = pod
+        watchers.append(Task { [weak self] in
+            while !Task.isCancelled {
+                if let connection = try? await pod.dialVsock(port: GuardContainer.memoryPort) {
+                    defer { try? connection.close() }
+                    do {
+                        for try await line in connection.bytes.lines {
+                            guard let stall = try? JSONDecoder().decode(MemoryStall.self, from: Data(line.utf8)) else {
+                                print("环境 \(pod.id)：网络小容器报来的内存情况读不懂：\(line)")
+                                continue
+                            }
+                            await self?.handle(stall)
+                        }
+                    } catch {}
+                }
+                guard (try? await Task.sleep(nanoseconds: 1_000_000_000)) != nil, self != nil else { return }
+            }
+        })
+    }
+
+    private func handle(_ stall: MemoryStall) async {
+        guard !stopping else { return }
+        await signalInVM(stall.pid, .kill)
+        let line = Data((stall.message + "\n").utf8)
+        for name in Set([stall.service, stall.targetService]) { try? logs[name]?.write(line) }
+        print("环境 \(pod.id)：\(stall.message)")
     }
 
     /// 定时看虚拟机还在不在。Containerization 没有虚拟机停止的通知，也不把框架的 delegate 交出来，只能看状态。

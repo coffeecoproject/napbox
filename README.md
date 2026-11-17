@@ -80,6 +80,7 @@ Not supported, among others: `read_only`, `cpus`, `pids_limit`, `security_opt`, 
 - Builds cannot use your Docker login or local Docker images: `FROM` must be pullable from a public registry.
 - napbox does not export images. Package release images with another tool, such as Apple's `container`.
 - Memory is returned to macOS only when an environment sleeps.
+- There is no swap in the virtual machine. When a service stalls on memory (at its own limit, or with the whole environment's memory used up), napbox ends the process using the most memory and says why in the service's log, instead of letting it hang.
 
 ## License
 

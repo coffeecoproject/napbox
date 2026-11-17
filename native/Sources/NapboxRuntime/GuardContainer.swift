@@ -14,6 +14,8 @@ enum GuardContainer {
     static let relayPort: UInt32 = 5300
     /// 它接受文件变化通知的 vsock 端口（guard/notify.go）
     static let notifyPort: UInt32 = 5301
+    /// 它报告卡在内存上的服务的 vsock 端口（guard/memwatch.go）
+    static let memoryPort: UInt32 = 5302
 
     /// 环境里的源码挂载在它这边怎么放：它也挂一份，通知才发得到（同一个目录在虚拟机里是同一份文件）。
     /// 服务挂单个文件时它挂这个文件所在的目录：虚拟机只能共享目录，服务那边也是共享这个目录再绑定其中的文件
@@ -75,6 +77,11 @@ enum GuardContainer {
     /// 和 guard/serviceproc.go 里的 vmProc 是同一个路径
     static var vmProcMount: Containerization.Mount {
         .any(type: "none", source: "/proc", destination: "/napbox-vmproc", options: ["bind"])
+    }
+
+    /// 虚拟机的 cgroup，只读：看各服务的内存压力和上限（guard/memwatch.go）。它自己的 /sys/fs/cgroup 只看得到它自己
+    static var vmCgroupMount: Containerization.Mount {
+        .any(type: "none", source: "/sys/fs/cgroup", destination: "/napbox-vmcgroup", options: ["bind", "ro"])
     }
 
     /// 容器的根文件系统在虚拟机里挂在哪（Containerization 的 LinuxPod.guestRootfsPath，pod.create 时就挂好）
