@@ -98,6 +98,23 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     public var temporary: String?
     /// 开始了还没做完的操作：动数据之前记上，做完一起去掉。napboxd 中途被杀时，下次启动先把它做完再开始监听
     public var pending: PendingOperation?
+    /// 声明了 x-napbox.seed 的开发环境，最近一次停下没拍成快照时记上原因；下次拍成了就清掉。
+    /// status 和别的 worktree 从它复制数据时（snapshot_not_found）带上，不用去翻 napboxd 的日志
+    public var snapshotSkipped: SnapshotSkip?
+
+    public struct SnapshotSkip: Codable, Equatable, Sendable {
+        /// 那次停下的时间
+        public var at: Date
+        public var reason: String
+
+        public init(at: Date, reason: String) {
+            self.at = at
+            self.reason = reason
+        }
+
+        /// 给人看的一句，status 的 snapshotError 和 snapshot_not_found 都用它
+        public var summary: String { "最近一次停下（\(ISO8601DateFormatter().string(from: at))）没拍成快照：\(reason)" }
+    }
 
     /// 要分几步、中途停下会留下半截状态的操作
     public enum PendingOperation: Codable, Equatable, Sendable {

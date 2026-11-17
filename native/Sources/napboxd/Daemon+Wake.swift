@@ -224,31 +224,55 @@ extension Daemon {
     /// - sleep：这次是休眠时给原因，停完发事件。重启、回收的停是中间步骤，不算休眠，由它们自己发事件
     /// - keepCompleted：false 是定义已经换了，这个环境跑完的一次性服务不再算数
     /// - snapshot：正常停下后给 x-napbox.seed 声明的卷拍快照。回收时不拍，环境要没了
+    /// 没正常停下时日志写明是哪一步（哪个服务超时、存盘失败等）
     func stopRunning(_ name: String, sleep: EnvironmentEvent.SleepReason? = nil, keepCompleted: Bool = true, snapshot: Bool = true) async {
         guard let env = running.removeValue(forKey: name) else { return }
         await stopWatching(name)
         await connections.closeAll(name)
         if keepCompleted { await saveCompleted(name, env) }
-        let clean = await env.stop()
-        if snapshot { takeSnapshot(name, clean: clean) }
+        let stoppedAt = Date()
+        let outcome = await env.stop()
+        if let problem = outcome.problem { print("环境 \(name) 没有正常停下：\(problem)") }
+        if snapshot { takeSnapshot(name, outcome: outcome, stoppedAt: stoppedAt) }
         if let sleep { emit(name, .slept) { $0.sleepReason = sleep } }
     }
 
     /// 只给 worktree 的开发环境拍（别的 worktree 从它复制）；被直接关掉、没存好盘的不拍，旧快照留着。
-    /// 拍不成只记日志，不影响停环境。在 actor 上同步做：克隆几个文件只要几毫秒，也不会和别人从快照复制交错
-    private func takeSnapshot(_ name: String, clean: Bool) {
-        guard let record = store.state.environment(name), record.owner == .worktree, record.temporary == nil,
-              let project = record.definition, project.seed != nil else { return }
-        guard clean else {
-            print("环境 \(name) 没有正常停下，不拍快照，留着上一份")
+    /// 拍不成不影响停环境：原因记日志，也记进登记（snapshotSkipped），status 和别的 worktree 复制数据报错时带上；拍成了清掉。
+    /// 在 actor 上同步做：克隆几个文件只要几毫秒，也不会和别人从快照复制交错
+    private func takeSnapshot(_ name: String, outcome: StopOutcome, stoppedAt: Date) {
+        guard let record = store.state.environment(name) else { return }
+        guard record.owner == .worktree, record.temporary == nil, let project = record.definition, project.seed != nil else {
+            // compose 去掉了 x-napbox.seed：之前记的原因不再相关
+            recordSnapshotSkip(name, nil)
+            return
+        }
+        if let problem = outcome.problem {
+            print("环境 \(name) 不拍快照，留着上一份")
+            recordSnapshotSkip(name, .init(at: stoppedAt, reason: problem))
             return
         }
         do {
             if let volumes = try runtime.takeSnapshot(record, project: project) {
                 print("环境 \(name) 拍了快照：\(volumes.joined(separator: "、"))")
+                recordSnapshotSkip(name, nil)
             }
         } catch {
             print(error.message)
+            recordSnapshotSkip(name, .init(at: stoppedAt, reason: error.message))
+        }
+    }
+
+    private func recordSnapshotSkip(_ name: String, _ skip: EnvironmentRecord.SnapshotSkip?) {
+        guard store.state.environment(name)?.snapshotSkipped != skip else { return }
+        do {
+            try store.update { (state: inout NapboxState) throws(NapboxError) in
+                if let i = state.environments.firstIndex(where: { $0.name == name }) {
+                    state.environments[i].snapshotSkipped = skip
+                }
+            }
+        } catch {
+            print("环境 \(name) 记录快照没拍成的原因失败：\(error.message)")
         }
     }
 

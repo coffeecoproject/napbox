@@ -145,26 +145,27 @@ public actor RunningEnvironment {
     /// 这几步里发给虚拟机的请求（结束进程、卸载、删进程）框架都不设时限，虚拟机里卡住时会一直等，
     /// 这个环境之后的操作跟着排队。所以整个过程有总时限（stopTimeLimit），到时直接关掉虚拟机：
     /// 卡住的请求随之失败返回，pod.stop() 也就结束了。相当于断电，靠磁盘的日志恢复（第 2 节「napboxd 被强杀后的磁盘」）。
-    /// 返回是不是正常停下的：虚拟机还在运行、服务都在 grace 时间内退出了、数据也存了盘（sync 成功），没有被直接关掉。
-    /// 只有这样停下的，数据卷才是干净的，可以拍快照（x-napbox.seed）
+    /// 返回怎么停下的（StopOutcome）：虚拟机还在运行、服务都在 grace 时间内退出了、数据也存了盘（sync 成功），
+    /// 没有被直接关掉，才算正常停下。只有这样停下的，数据卷才是干净的，可以拍快照（x-napbox.seed）
     @discardableResult
-    public func stop() async -> Bool {
+    public func stop() async -> StopOutcome {
         stopping = true
         vmWatcher?.cancel()
         sourceStream?.stop()
         await sourceForwarder?.close()
         let id = pod.id, vm = vm
         let limit = stopTimeLimit
-        var clean = false
+        var outcome = StopOutcome()
         let timedOut = await Deadline.run(seconds: limit, onTimeout: {
             print("环境 \(id) 停了 \(Int(limit)) 秒还没停下，直接关掉虚拟机")
             try? await vm?.stop()
         }) {
-            clean = await stopInside()
+            outcome = await stopInside()
         }
+        if timedOut { outcome.timeLimit = limit }
         for w in watchers { w.cancel() }
         for log in logs.values { log.close() }
-        return clean && !timedOut
+        return outcome
     }
 
     /// 正常情况下停完要多久的上限：每层服务里最长的 stop_grace_period 加起来、存盘的 10 秒、
@@ -174,11 +175,10 @@ public actor RunningEnvironment {
         return grace + 10 + 3 * Double(logs.count + 2) + 30
     }
 
-    /// 返回是不是正常停下的（服务都按时退出、sync 成功）
-    private func stopInside() async -> Bool {
-        var clean = false
+    /// 记下哪些服务没按时退出、sync 是否成功；虚拟机已经没了也记上
+    private func stopInside() async -> StopOutcome {
+        var outcome = StopOutcome()
         if await vmState() == .running {
-            clean = true
             for layer in stopLayers {
                 let names = layer.filter { started.contains($0) && exits[$0] == nil }
                 for name in names {
@@ -186,18 +186,21 @@ public actor RunningEnvironment {
                 }
                 let signalled = Date()
                 for name in names {
-                    let deadline = signalled.addingTimeInterval(gracePeriods[name] ?? Self.defaultGracePeriod)
+                    let grace = gracePeriods[name] ?? Self.defaultGracePeriod
+                    let deadline = signalled.addingTimeInterval(grace)
                     while exits[name] == nil, Date() < deadline {
                         try? await Task.sleep(nanoseconds: 100_000_000)
                     }
-                    if exits[name] == nil { clean = false }
+                    if exits[name] == nil { outcome.overdue.append(.init(service: name, grace: grace)) }
                 }
             }
             let (code, _) = await exec(GuardContainer.name, [GuardContainer.program, "sync"], timeout: 10)
-            if code != 0 { clean = false }
+            if code != 0 { outcome.syncFailed = true }
+        } else {
+            outcome.vmGone = true
         }
         try? await pod.stop()
-        return clean
+        return outcome
     }
 
     // MARK: - 启动

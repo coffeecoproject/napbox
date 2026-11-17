@@ -190,12 +190,15 @@ public struct EnvironmentInfo: Codable, Sendable {
     public var serviceExits: [ServiceExit]
     /// develop.watch 最近一次同步或重建失败的原因（这时跑的可能还是旧代码），下次成功后清掉
     public var watchError: String?
+    /// 声明了 x-napbox.seed 的开发环境，最近一次停下没拍成快照的说明（什么时候、为什么），下次拍成了就没有。
+    /// 这时别的 worktree 复制到的是更早的快照，没有更早的会报 snapshot_not_found
+    public var snapshotError: String?
     /// 只在这次 up、reset 起环境之前从别的环境的快照复制了数据时才有：数据是哪个环境、什么时候的
     public var seededFrom: SeedSource?
 
     public init(name: String, owner: String?, state: EnvironmentState, worktree: String, ports: [PortInfo], hostPorts: [HostPortInfo], egress: EgressMode,
                 variables: [String: String], unsetVariables: [String], lastError: String? = nil, serviceExits: [ServiceExit] = [], watchError: String? = nil,
-                seededFrom: SeedSource? = nil) {
+                snapshotError: String? = nil, seededFrom: SeedSource? = nil) {
         self.name = name
         self.owner = owner
         self.state = state
@@ -208,6 +211,7 @@ public struct EnvironmentInfo: Codable, Sendable {
         self.lastError = lastError
         self.serviceExits = serviceExits
         self.watchError = watchError
+        self.snapshotError = snapshotError
         self.seededFrom = seededFrom
     }
 }

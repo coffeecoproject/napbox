@@ -159,7 +159,8 @@ actor Daemon {
             variables: PortVariables.all(active, hostPorts: host),
             unsetVariables: record.definition?.unsetVariables ?? [],
             lastError: sessions[record.name]?.lastFailure?.message, serviceExits: sessions[record.name]?.exits ?? [],
-            watchError: sessions[record.name]?.watchError
+            watchError: sessions[record.name]?.watchError,
+            snapshotError: record.snapshotSkipped?.summary
         )
     }
 
