@@ -1,0 +1,9 @@
+{
+  "name": "napbox-demo-api",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "postgres": "4.1.1",
+    "redis": "6.3.1"
+  }
+}

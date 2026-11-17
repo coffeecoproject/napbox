@@ -10,6 +10,18 @@ napbox 按项目的 compose 文件，给每个 git worktree 起一套隔离的�
 
 **状态：0.1.7，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
 
+## 为什么
+
+用 Docker compose 同时让几个 coding agent 各在一个 worktree 里干活，会碰到三件事：
+
+- **端口冲突。** compose 里把宿主机端口写死了，第二个 worktree 一 `up` 就卡在 5432 上。改成共用一个库，这个 agent 跑迁移又会弄乱那个 agent 的数据。
+- **内存回不来。** 只要还有一个容器在跑，Docker Desktop 的虚拟机就占着分给它的全部内存，而 agent 起了的东西很少会关。
+- **agent 用 Docker 不顺手。** 要自己拼 `docker compose` 命令、猜端口，用完的容器一直留着。
+
+用 napbox，每个 worktree 按同一份 compose 起一套自己的服务，端口不冲突，`down` 之前一直不变。闲置的环境休眠，内存还给 macOS，下次连接时唤醒，数据库一般约 1 秒就能连上。新 worktree 可以带着主目录的数据起来。agent 用 MCP 工具，拿到的是 JSON。
+
+想几分钟看明白，就跑一遍[演示项目](examples/demo/README.zh-CN.md)。
+
 ## 要求
 
 - macOS 26 或更新版本，Apple 芯片

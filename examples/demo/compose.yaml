@@ -1,0 +1,62 @@
+# napbox 演示项目：PostgreSQL + Redis + 一次性迁移服务 + Node 后端。
+# ports 只写容器端口，宿主机端口由 napbox 给每个 worktree 分一个。
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: demo
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 1s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      retries: 30
+
+  # 建表写成一次性服务，后端等它跑完再起
+  migrate:
+    image: postgres:17-alpine
+    restart: "no"
+    environment:
+      PGPASSWORD: demo
+    volumes:
+      - ./migrate.sql:/migrate.sql:ro
+    command: ["psql", "-h", "db", "-U", "postgres", "-v", "ON_ERROR_STOP=1", "-f", "/migrate.sql"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: ./api
+    # node 当 1 号进程收不到 SIGTERM，停下要等满 stop_grace_period，快照就拍不成
+    init: true
+    environment:
+      DATABASE_URL: postgres://postgres:demo@db:5432/postgres
+      REDIS_URL: redis://redis:6379
+      # 起服务时换成这个环境分到的宿主机地址，比如 127.0.0.1:41217
+      PUBLIC_ADDRESS: ${NAPBOX_API_3000}
+    ports:
+      - "3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+
+x-napbox:
+  # 新 worktree 第一次 up 时，从主目录环境最新的快照复制这个卷
+  seed: [pgdata]

@@ -10,6 +10,18 @@ It is built on Apple's open-source [Containerization](https://github.com/apple/c
 
 **Status: 0.1.7, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
 
+## Why
+
+Run a few coding agents in parallel, each in its own worktree, with Docker compose, and you hit three things:
+
+- **Port clashes.** compose files hardcode host ports, so the second worktree's `up` fails on 5432. If they share one database instead, one agent's migration breaks another's data.
+- **Memory that never comes back.** While any container is running, the Docker Desktop VM keeps all the memory you gave it, and agents rarely stop what they started.
+- **Agents fumbling with Docker.** They assemble `docker compose` commands, guess ports and leave containers behind.
+
+With napbox, each worktree gets its own services from the same compose file, on ports that never clash and stay fixed until you `down` it. Idle environments sleep and give their memory back; the next connection wakes them, and a database is usually ready in about a second. A new worktree can start with a copy of main's data. Agents use MCP tools and get JSON back.
+
+To see it in a couple of minutes, try the [demo project](examples/demo).
+
 ## Requirements
 
 - macOS 26 or later, Apple silicon
