@@ -1,4 +1,4 @@
-// 一个服务的容器怎么配：命令、环境变量、工作目录、挂载、内存上限，按 Docker 的规则合并镜像配置和 compose。
+// 一个服务的容器怎么配：命令、环境变量、工作目录、挂载、内存和核数，按 Docker 的规则合并镜像配置和 compose。
 import Containerization
 import ContainerizationOCI
 import Foundation
@@ -35,7 +35,8 @@ struct ContainerPlan: Sendable {
     let mounts: [Containerization.Mount]
     /// 只读挂载的宿主机目录在容器里的路径
     let readOnlySources: [String]
-    let memoryBytes: UInt64
+    /// compose 里写的内存上限；没写的不单独封顶
+    let memoryLimit: UInt64?
     let useInit: Bool
     /// 停服务时发的信号：镜像的 STOPSIGNAL（比如 postgres 是 SIGINT），没写的是 SIGTERM，和 Docker 一样
     let stopSignal: Signal
@@ -73,7 +74,7 @@ struct ContainerPlan: Sendable {
         }
         environment = env.map { "\($0)=\($1)" }
         workingDirectory = s.workingDir ?? imageConfig.workingDir.flatMap { $0.isEmpty ? nil : $0 } ?? "/"
-        memoryBytes = s.memoryBytes
+        memoryLimit = s.memoryLimit
         useInit = s.initProcess
 
         var extra: [Containerization.Mount] = []
@@ -125,7 +126,8 @@ struct ContainerPlan: Sendable {
         }
     }
 
-    func configure(_ c: inout LinuxPod.ContainerConfiguration) {
+    /// - cpus：所在虚拟机的核数，容器用得到全部（框架默认每个容器 4 核）
+    func configure(_ c: inout LinuxPod.ContainerConfiguration, cpus: Int) {
         c.process = LinuxProcessConfiguration(from: imageConfig)
         c.process.arguments = arguments
         c.process.environmentVariables = environment
@@ -138,7 +140,14 @@ struct ContainerPlan: Sendable {
             c.process.stdout = log
             c.process.stderr = log
         }
-        c.memoryInBytes = memoryBytes
+        c.cpus = cpus
+        if let memoryLimit {
+            c.memoryInBytes = memoryLimit
+        } else {
+            // 没写上限的不封顶，和同一环境里其他没写的服务共用虚拟机的内存。框架总按 memoryInBytes（默认 1G）写容器的
+            // memory.max，unified 在它之后写，把它改回 max：容器里看到的就是没有上限，网络小容器据此分辨（guard/memwatch.go）
+            c.unified["memory.max"] = "max"
+        }
         c.useInit = useInit
         c.mounts = mounts
         c.readonlyPaths += readOnlySources

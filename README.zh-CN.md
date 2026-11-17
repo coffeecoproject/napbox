@@ -66,7 +66,7 @@ agent 第一次要起服务时，napbox 会报还没准备好，agent 就去调�
 
 本地开发的 compose 常用的写法都支持。别的写法直接报错，说清楚是哪里、为什么，不会悄悄忽略。
 
-支持：`image`、`build`（`context`、`dockerfile`、`target`、`args`）、`command`、`entrypoint`、`environment`、`env_file`、`working_dir`、`init`、`shm_size`、`tmpfs`、`pull_policy`、`stop_grace_period`、`ports`（只取容器端口）、`expose`、`volumes`（命名卷、目录和单个文件）、带条件的 `depends_on`、`healthcheck`、`restart`、`profiles`、`develop.watch`、`secrets`（文件形式）、内存上限、默认网络、变量替换、多份 compose 合并、YAML 合并键。
+支持：`image`、`build`（`context`、`dockerfile`、`target`、`args`）、`command`、`entrypoint`、`environment`、`env_file`、`working_dir`、`init`、`shm_size`、`tmpfs`、`pull_policy`、`stop_grace_period`、`ports`（只取容器端口）、`expose`、`volumes`（命名卷、目录和单个文件）、带条件的 `depends_on`、`healthcheck`、`restart`、`profiles`、`develop.watch`、`secrets`（文件形式）、内存上限（`mem_limit`、`deploy.resources.limits.memory`；没写的服务和 Docker 一样不单独封顶，共用整个环境的内存）、默认网络、变量替换、多份 compose 合并、YAML 合并键。
 
 不支持的有：`read_only`、`cpus`、`pids_limit`、`security_opt`、`platform`、`privileged`、`cap_add: NET_ADMIN`、`network_mode`、`configs`、YAML 标签 `!reset` 和 `!override`，以及上面四个以外的 `build` 选项。
 

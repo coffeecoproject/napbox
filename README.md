@@ -66,7 +66,7 @@ All commands print JSON (`napbox status --text` prints a table).
 
 napbox supports what local dev compose files commonly use, and rejects everything else with an error that says what and why, instead of ignoring it.
 
-Supported: `image`, `build` (`context`, `dockerfile`, `target`, `args`), `command`, `entrypoint`, `environment`, `env_file`, `working_dir`, `init`, `shm_size`, `tmpfs`, `pull_policy`, `stop_grace_period`, `ports` (container port only), `expose`, `volumes` (named volumes, directories and single files), `depends_on` with conditions, `healthcheck`, `restart`, `profiles`, `develop.watch`, `secrets` (file form), memory limits, the default network, variable substitution, multiple compose files and YAML merge keys.
+Supported: `image`, `build` (`context`, `dockerfile`, `target`, `args`), `command`, `entrypoint`, `environment`, `env_file`, `working_dir`, `init`, `shm_size`, `tmpfs`, `pull_policy`, `stop_grace_period`, `ports` (container port only), `expose`, `volumes` (named volumes, directories and single files), `depends_on` with conditions, `healthcheck`, `restart`, `profiles`, `develop.watch`, `secrets` (file form), memory limits (`mem_limit`, `deploy.resources.limits.memory`; as in Docker, a service without one is not capped on its own and shares the whole environment's memory), the default network, variable substitution, multiple compose files and YAML merge keys.
 
 Not supported, among others: `read_only`, `cpus`, `pids_limit`, `security_opt`, `platform`, `privileged`, `cap_add: NET_ADMIN`, `network_mode`, `configs`, the `!reset` and `!override` YAML tags, and `build` options beyond the four above.
 

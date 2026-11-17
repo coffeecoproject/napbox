@@ -112,7 +112,7 @@ extension [ComposeIssue] {
         #expect(db.healthcheck?.intervalSeconds == 1)
         #expect(db.healthcheck?.retries == 20)
         #expect(db.healthcheck?.timeoutSeconds == 30)
-        #expect(db.memoryBytes == 512 * 1024 * 1024)
+        #expect(db.memoryLimit == 512 * 1024 * 1024)
         #expect(db.tmpfs == ["/tmp"])
         #expect(db.shmSizeBytes == 256 * 1024 * 1024)
 
@@ -130,18 +130,20 @@ extension [ComposeIssue] {
         #expect(api.dependsOn == [Dependency(service: "db", condition: .healthy)])
         #expect(api.restart == .onFailure(maxRetries: 3))
         #expect(api.stopGracePeriodSeconds == 90)
-        #expect(api.memoryBytes == 2 * 1024 * 1024 * 1024)
+        #expect(api.memoryLimit == 2 * 1024 * 1024 * 1024)
         #expect(api.keepAwake)
 
         let worker = try #require(p.service("worker"))
         #expect(worker.dependsOn == [Dependency(service: "db", condition: .started)])
-        #expect(worker.memoryBytes == 128 * 1024 * 1024)
+        #expect(worker.memoryLimit == 128 * 1024 * 1024)
         #expect(worker.listeningPorts.isEmpty)
     }
 
-    @Test func defaultMemory() throws {
-        let p = try load(["compose.yaml": "services:\n  a:\n    image: alpine\n"])
-        #expect(p.services[0].memoryBytes == 1024 * 1024 * 1024)
+    @Test func memoryWithoutLimitIsShared() throws {
+        let p = try load(["compose.yaml": "services:\n  a:\n    image: alpine\n  b:\n    image: alpine\n    mem_limit: 2g\n"])
+        #expect(p.services[0].memoryLimit == nil)
+        #expect(p.services[0].memoryShareBytes == 1024 * 1024 * 1024)
+        #expect(p.services[1].memoryShareBytes == 2 * 1024 * 1024 * 1024)
     }
 
     @Test func unsupportedKeysAreErrors() throws {

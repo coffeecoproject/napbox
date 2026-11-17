@@ -22,7 +22,7 @@ public actor Runtime {
 
     /// vminit 的版本和 Containerization 一致
     static let vminitReference = "ghcr.io/apple/containerization/vminit:0.53.0"
-    /// 每个虚拟机除了各服务的内存上限之外，多给的部分（虚拟机本身约 290MB，再加网络小容器）
+    /// 每个虚拟机除了各服务那一份内存（Service.memoryShareBytes）之外，多给的部分（虚拟机本身约 290MB，再加网络小容器）
     static let vmOverheadBytes: UInt64 = 512 * 1024 * 1024
 
     public init(supportDirectory: URL, guardBinary: URL) {
@@ -246,13 +246,15 @@ public actor Runtime {
         let volumes = try project.volumes.map { name throws(NapboxError) in
             LinuxPod.PodVolume(name: name, source: .diskImage(path: try layout.volume(name), readOnly: false), format: "ext4")
         }
-        let memory = project.services.reduce(Self.vmOverheadBytes) { $0 + $1.memoryBytes }
+        // 虚拟机的内存是各服务那一份加起来，用多少才向 macOS 要多少；核数和本机一样，空着的核不占资源
+        let resources = VMResources(cpus: ProcessInfo.processInfo.activeProcessorCount,
+                                    memoryInBytes: project.services.reduce(Self.vmOverheadBytes) { $0 + $1.memoryShareBytes })
         do {
             let cidr = try CIDRv4("\(ip)/24")
             let gateway = try IPv4Address(AddressAllocator.gateway)
             let mac = try MACAddress(try AddressAllocator.macAddress(for: ip))
             let finalHosts = hosts
-            let pod = try LinuxPod("napbox-\(record.id)", vmm: vmm, vm: VMResources(cpus: 4, memoryInBytes: memory)) { c in
+            let pod = try LinuxPod("napbox-\(record.id)", vmm: vmm, vm: resources) { c in
                 c.interfaces = [NATInterface(ipv4Address: cidr, ipv4Gateway: gateway, macAddress: mac)]
                 c.dns = DNS(nameservers: [AddressAllocator.gateway])
                 c.hosts = finalHosts
@@ -280,7 +282,7 @@ public actor Runtime {
                 c.memoryInBytes = 256 * 1024 * 1024
             }
             for plan in containers {
-                try await pod.addContainer(plan.name, rootfs: plan.rootfs) { c in plan.configure(&c) }
+                try await pod.addContainer(plan.name, rootfs: plan.rootfs) { c in plan.configure(&c, cpus: resources.cpus) }
             }
             try await pod.create()
             return pod

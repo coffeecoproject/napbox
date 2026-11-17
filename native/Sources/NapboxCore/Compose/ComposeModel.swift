@@ -57,10 +57,18 @@ public struct Service: Codable, Equatable, Sendable {
     public var dependsOn: [Dependency]
     public var healthcheck: Healthcheck?
     public var restart: RestartPolicy
-    public var memoryBytes: UInt64
+    /// 自己的内存上限（mem_limit、deploy.resources.limits.memory 或 x-napbox.memory）。没写的服务不单独封顶，
+    /// 和环境里其他没写的服务共用整个虚拟机的内存，和 Docker 不写上限时一样
+    public var memoryLimit: UInt64?
     public var keepAwake: Bool
     /// develop.watch
     public var watch: [WatchRule] = []
+
+    /// 没写上限的服务给虚拟机算的内存：虚拟机的内存是各服务这一份加起来，没写上限的服务在里面共用
+    public static let sharedMemoryShareBytes: UInt64 = 1024 * 1024 * 1024
+
+    /// 这个服务给虚拟机算的内存：写了上限的算上限，没写的算一份共用的
+    public var memoryShareBytes: UInt64 { memoryLimit ?? Self.sharedMemoryShareBytes }
 
     /// 判断就绪用：写了 ports 或 expose 的算有端口
     public var listeningPorts: [Int] { Array(Set(ports + expose)).sorted() }
