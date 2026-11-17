@@ -52,7 +52,7 @@ import NapboxProtocol
             name: name, image: "x", build: build, command: nil, entrypoint: nil, environment: [:], workingDir: nil,
             initProcess: false, shmSizeBytes: nil, tmpfs: [], pullPolicy: nil, stopGracePeriodSeconds: nil,
             ports: [], expose: [], volumes: [], dependsOn: [], healthcheck: nil, restart: .no,
-            memoryBytes: 1, keepAwake: false
+            memoryLimit: nil, keepAwake: false
         )
         s.watch = rules
         return s

@@ -4,7 +4,7 @@
 // 它留在虚拟机自己的网络里，每个服务的容器各有各的网络（network.go）：出网规则加在虚拟机替服务转发的那条路上，
 // 转发端口时从这里连服务的地址。
 //
-//	napbox-guard              当容器的 1 号进程：转发端口连接（relay.go）、发文件变化通知（notify.go），收养并回收孤儿进程，收到 SIGTERM/SIGINT 退出
+//	napbox-guard              当容器的 1 号进程：转发端口连接（relay.go）、发文件变化通知（notify.go）、报告卡在内存上的服务（memwatch.go），收养并回收孤儿进程，收到 SIGTERM/SIGINT 退出
 //	napbox-guard egress open <DNS 服务器> [网段或地址...] | none   换掉所有服务的出网规则（一次事务，要 NET_ADMIN）
 //	napbox-guard listening <服务>   列出这个服务正在监听的 TCP 端口，一行一个
 //	napbox-guard sync         把虚拟机的文件系统刷到磁盘
@@ -59,8 +59,8 @@ func main() {
 }
 
 func serve() {
-	// 这两个断了环境就没法用了：退出，让 napboxd 按服务退出处理，不留一个看起来正常的环境
-	for _, listen := range []func() error{serveRelay, serveNotify} {
+	// 这几个断了环境就没法用了（卡在内存上的服务没人处理也算）：退出，让 napboxd 按服务退出处理，不留一个看起来正常的环境
+	for _, listen := range []func() error{serveRelay, serveNotify, serveMemory} {
 		go func() {
 			if err := listen(); err != nil {
 				fmt.Fprintln(os.Stderr, err)

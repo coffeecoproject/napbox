@@ -1353,6 +1353,54 @@ async function execIn(client: NapboxClient, target: EnvironmentTarget, service: 
   return { exitCode, stdout: Buffer.concat(chunks).toString() };
 }
 
+describe("服务的内存", { concurrency: false }, () => {
+  // box 写了上限，碰到 /tmp/grow 就每 50 毫秒多占 8MB；free 没写上限。node 的代码页够大，到顶后内核反复挤它、不结束进程，
+  // 正是要网络小容器处理的卡住（DESIGN.md 第 7 节「卡在内存上」）
+  const compose = `services:
+  box:
+    image: node:22-alpine
+    command: ["node", "-e", "const fs = require('fs'); const a = []; setInterval(() => { if (fs.existsSync('/tmp/grow')) a.push(Buffer.alloc(8 << 20, 1)) }, 50)"]
+    mem_limit: 512m
+    stop_grace_period: 1s
+  free:
+    image: alpine:3.20
+    command: ["sleep", "100000"]
+    stop_grace_period: 1s
+`;
+  const worktree = repo("memory/repo", compose);
+  const target: EnvironmentTarget = { cwd: worktree };
+  let daemon: Daemon;
+  let client: NapboxClient;
+
+  before(async () => {
+    daemon = await startDaemon(support, log);
+    client = daemon.client;
+    await client.up({ cwd: worktree, environment: {} });
+  });
+  after(async () => {
+    await client.down(target).catch(() => {});
+    await daemon.stop("SIGTERM");
+  });
+
+  test("写了上限的按它封顶；没写的不封顶（memory.max 是 max），和别的服务共用虚拟机的内存", async () => {
+    assert.equal((await execIn(client, target, "box", ["cat", "/sys/fs/cgroup/memory.max"])).stdout, `${512 << 20}\n`);
+    assert.equal((await execIn(client, target, "free", ["cat", "/sys/fs/cgroup/memory.max"])).stdout, "max\n");
+  });
+
+  test("卡在自己的上限上：很快结束占内存最多的进程，服务的日志写明原因", async () => {
+    await execIn(client, target, "box", ["touch", "/tmp/grow"]);
+    await waitUntil(
+      "box 被结束",
+      async () => (await client.environment(target)).serviceExits.some((e) => e.service === "box" && e.exitCode === 137),
+      90_000,
+    );
+    const chunks: Buffer[] = [];
+    await client.logs({ target, service: "box", onOutput: (o) => void chunks.push(Buffer.from(o.data)) });
+    assert.match(Buffer.concat(chunks).toString(), /napbox：box 的内存到了上限 512MB，卡住了.*结束了它里面占内存最多的进程 node（进程号 \d+/);
+    assert.equal((await execIn(client, target, "free", ["true"])).exitCode, 0, "别的服务不受影响");
+  });
+});
+
 describe("服务自己退出后恢复", { concurrency: false }, () => {
   // web 有端口，worker 没有端口；都不写 restart，要靠 up、create、wake 拉起来。容器文件系统重启后沿用，/tmp/quit 启动时先删
   const compose = `services:

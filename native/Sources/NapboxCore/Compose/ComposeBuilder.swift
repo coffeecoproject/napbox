@@ -14,8 +14,6 @@ struct ComposeBuilder {
 
     private(set) var issues: [ComposeIssue] = []
 
-    static let defaultMemoryBytes: UInt64 = 1024 * 1024 * 1024
-
     private static let serviceKeys: Set<String> = [
         "image", "build", "command", "entrypoint", "environment", "env_file", "working_dir", "init", "shm_size",
         "tmpfs", "pull_policy", "stop_grace_period", "container_name", "expose", "ports", "volumes", "depends_on",
@@ -209,7 +207,7 @@ struct ComposeBuilder {
             name: name, image: nil, build: nil, command: nil, entrypoint: nil, environment: [:], workingDir: nil,
             initProcess: false, shmSizeBytes: nil, tmpfs: [], pullPolicy: nil, stopGracePeriodSeconds: nil,
             ports: [], expose: [], volumes: [], dependsOn: [], healthcheck: nil, restart: .no,
-            memoryBytes: Self.defaultMemoryBytes, keepAwake: false
+            memoryLimit: nil, keepAwake: false
         )
         var profiles: [String] = []
         var memLimit: UInt64?
@@ -276,7 +274,7 @@ struct ComposeBuilder {
         }
         s.environment = fileEnvironment.merging(s.environment) { _, new in new }
         s.volumes += secretFiles
-        s.memoryBytes = memLimit ?? deployMemory ?? napboxMemory ?? Self.defaultMemoryBytes
+        s.memoryLimit = memLimit ?? deployMemory ?? napboxMemory
         if s.image == nil, s.build == nil {
             issues.append(.invalid("\(at)：要写 image 或 build"))
         }

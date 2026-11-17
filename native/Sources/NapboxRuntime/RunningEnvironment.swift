@@ -228,6 +228,7 @@ public actor RunningEnvironment {
         try await writeSysctl(settings)
         try await startContainer(GuardContainer.name)
         watchGuard()
+        watchMemory()
         try await applyEgress(egress)
         try startSourceEvents(project)
         // 每个服务一启动就开始判断它自己就绪没有，各查各的：先起好的（比如数据库）马上算就绪，
@@ -317,6 +318,37 @@ public actor RunningEnvironment {
             guard (try? await pod.waitContainer(GuardContainer.name)) != nil else { return }
             await self?.recordVMLost()
         })
+    }
+
+    /// 收网络小容器报来的卡在内存上的服务（MemoryStall）：结束它说的那个进程，写进相关服务的日志。
+    /// 连接在虚拟机停了时断开，循环随之结束；连不上（网络小容器刚起来还没开始听）隔一秒再连。
+    private func watchMemory() {
+        let pod = pod
+        watchers.append(Task { [weak self] in
+            while !Task.isCancelled {
+                if let connection = try? await pod.dialVsock(port: GuardContainer.memoryPort) {
+                    defer { try? connection.close() }
+                    do {
+                        for try await line in connection.bytes.lines {
+                            guard let stall = try? JSONDecoder().decode(MemoryStall.self, from: Data(line.utf8)) else {
+                                print("环境 \(pod.id)：网络小容器报来的内存情况读不懂：\(line)")
+                                continue
+                            }
+                            await self?.handle(stall)
+                        }
+                    } catch {}
+                }
+                guard (try? await Task.sleep(nanoseconds: 1_000_000_000)) != nil, self != nil else { return }
+            }
+        })
+    }
+
+    private func handle(_ stall: MemoryStall) async {
+        guard !stopping else { return }
+        await signalInVM(stall.pid, .kill)
+        let line = Data((stall.message + "\n").utf8)
+        for name in Set([stall.service, stall.targetService]) { try? logs[name]?.write(line) }
+        print("环境 \(pod.id)：\(stall.message)")
     }
 
     /// 定时看虚拟机还在不在。Containerization 没有虚拟机停止的通知，也不把框架的 delegate 交出来，只能看状态。
@@ -520,43 +552,34 @@ public actor RunningEnvironment {
                           body: @escaping @Sendable (FileHandle) throws -> Void) async throws {
         let port = nextCopyPort
         nextCopyPort += 1
-        try await pod.withVirtualMachineInstance { vm in
+        try await VMAgent.session(pod) { vm, vminitd in
             let listener = try vm.listen(port)
             defer { try? listener.finish() }
-            guard let vminitd = try await vm.dialAgent() as? Vminitd else {
-                throw NapboxError(.internalError, "虚拟机里的代理不是 vminitd")
-            }
-            do {
-                try await withThrowingTaskGroup(of: Void.self) { group in
-                    group.addTask {
-                        do {
-                            try await vminitd.copy(direction: direction, root: GuardContainer.guestRootfs(service), path: path, vsockPort: port, isArchive: isArchive)
-                        } catch {
-                            try? listener.finish() // 不会连回来了（比如要读的文件没有），别让另一边一直等
-                            throw error
-                        }
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    do {
+                        try await vminitd.copy(direction: direction, root: GuardContainer.guestRootfs(service), path: path, vsockPort: port, isArchive: isArchive)
+                    } catch {
+                        try? listener.finish() // 不会连回来了（比如要读的文件没有），别让另一边一直等
+                        throw error
                     }
-                    group.addTask {
-                        guard let connection = await listener.first(where: { _ in true }) else {
-                            throw NapboxError(.internalError, "虚拟机没有连回来")
-                        }
-                        try listener.finish()
-                        defer { connection.closeFile() }
-                        try await Blocking.run { () throws(NapboxError) in
-                            do {
-                                try body(connection)
-                            } catch {
-                                throw NapboxError(.internalError, "\(error)")
-                            }
-                        }
-                    }
-                    try await group.waitForAll()
                 }
-            } catch {
-                try? await vminitd.close()
-                throw error
+                group.addTask {
+                    guard let connection = await listener.first(where: { _ in true }) else {
+                        throw NapboxError(.internalError, "虚拟机没有连回来")
+                    }
+                    try listener.finish()
+                    defer { connection.closeFile() }
+                    try await Blocking.run { () throws(NapboxError) in
+                        do {
+                            try body(connection)
+                        } catch {
+                            throw NapboxError(.internalError, "\(error)")
+                        }
+                    }
+                }
+                try await group.waitForAll()
             }
-            try? await vminitd.close()
         }
     }
 
@@ -726,18 +749,7 @@ public actor RunningEnvironment {
     /// 由 vminitd 写虚拟机的内核设置（/proc/sys 下的）：容器里这些文件是只读的。
     private func writeSysctl(_ settings: [String: String]) async throws(NapboxError) {
         do {
-            try await pod.withVirtualMachineInstance { vm in
-                guard let vminitd = try await vm.dialAgent() as? Vminitd else {
-                    throw NapboxError(.internalError, "虚拟机里的代理不是 vminitd")
-                }
-                do {
-                    try await vminitd.sysctl(settings: settings)
-                } catch {
-                    try? await vminitd.close()
-                    throw error
-                }
-                try? await vminitd.close()
-            }
+            try await VMAgent.session(pod) { _, vminitd in try await vminitd.sysctl(settings: settings) }
         } catch {
             let text = settings.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "、")
             throw NapboxError(.serviceFailed, "写虚拟机的内核设置 \(text) 失败（环境可能停了）：\(error)")
@@ -909,14 +921,15 @@ public actor RunningEnvironment {
     /// 子进程默认同组；process.kill 只发给组长，子进程会变成孤儿留下。
     /// 用 setsid 自己脱离出去的进程不在这个组里，留到环境停止时随虚拟机结束。
     private nonisolated func killGroup(_ process: LinuxProcess) async {
+        await signalInVM(-process.pid, .kill)
+    }
+
+    /// 由 vminitd 按虚拟机里的进程号发信号（负数是进程组）：napboxd 和网络小容器都不在服务的进程命名空间里
+    private nonisolated func signalInVM(_ pid: Int32, _ signal: Signal) async {
         do {
-            try await pod.withVirtualMachineInstance { vm in
-                let agent = try await vm.dialAgent()
-                defer { Task { try? await agent.close() } }
-                _ = try await agent.kill(pid: -process.pid, signal: Signal.kill.rawValue)
-            }
+            try await VMAgent.session(pod) { _, vminitd in _ = try await vminitd.kill(pid: pid, signal: signal.rawValue) }
         } catch {
-            print("环境 \(pod.id)：结束命令（进程组 \(process.pid)）失败：\(error)")
+            print("环境 \(pod.id)：给进程 \(pid) 发 \(signal) 失败：\(error)")
         }
     }
 
