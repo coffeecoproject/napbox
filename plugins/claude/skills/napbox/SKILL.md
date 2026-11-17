@@ -42,7 +42,6 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
       image: mcr.microsoft.com/playwright:v1.60.0-noble   # 和项目装的 Playwright 同一版本
       init: true
       shm_size: 1g
-      mem_limit: 2g   # 默认每个服务 1g，浏览器偏紧
       volumes:
         - ..:/work:ro   # 仓库根目录，相对这份 compose 所在的目录
       command: ["node", "/work/node_modules/@playwright/test/cli.js", "run-server", "--port", "3000", "--host", "0.0.0.0"]
