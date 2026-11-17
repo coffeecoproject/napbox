@@ -257,6 +257,27 @@ describe("镜像构建", { concurrency: false }, () => {
     assert.equal((await client.environment(target)).lastError, undefined);
   });
 
+  test("create 带 confine：构建照常（构建虚拟机只共享代码目录本身）；Dockerfile 是指出去的符号链接就不构建", async () => {
+    const dir = path.join(work, "confined-build");
+    const outside = path.join(work, "confined-build-outside");
+    mkdirSync(path.join(dir, "app"), { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    execFileSync("git", ["init", "-q", dir]);
+    writeFileSync(path.join(outside, "Dockerfile"), "FROM alpine:3.20\n");
+    writeFileSync(path.join(dir, "compose.yaml"), 'services:\n  app:\n    build: ./app\n    command: ["sleep", "100000"]\n    stop_grace_period: 1s\n');
+    writeFileSync(path.join(dir, "app/Dockerfile"), "FROM alpine:3.20\nCOPY a.txt /a.txt\n");
+    writeFileSync(path.join(dir, "app/a.txt"), "confined\n");
+    const target = { name: "codeos/confined-build", owner: "codeos" };
+    assert.equal((await client.create({ ...target, directory: dir, confine: true })).confined, true);
+    let text = "";
+    await client.exec({ target, service: "app", command: ["cat", "/a.txt"], onOutput: (o) => void (text += Buffer.from(o.data).toString()) });
+    assert.equal(text, "confined\n");
+    await client.down(target, { discardData: true });
+    rmSync(path.join(dir, "app/Dockerfile"));
+    symlinkSync(path.join(outside, "Dockerfile"), path.join(dir, "app/Dockerfile"));
+    await rejectsWithCode(client.create({ ...target, directory: dir, confine: true }), "path_outside_directory");
+  });
+
   test("Dockerfile 或目录不存在：不开虚拟机，直接说清楚", async () => {
     const dir = path.join(work, "missing");
     mkdirSync(dir);

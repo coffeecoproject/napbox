@@ -2,9 +2,9 @@
 // 能用真实 napboxd 的都用真实的；只有真实 napboxd 发不出来的坏回应才用假服务端，放在最后一组。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { after, before, describe, test } from "node:test";
 import { NapboxClient, NapboxError } from "../src/client.ts";
@@ -203,6 +203,24 @@ describe("真实 napboxd：请求和错误码", () => {
     await rejectsWithCode(client.up({ cwd: repo, environment: {} }), "runtime_unavailable");
   });
 
+  test("create 带 confine：compose 用到代码目录以外的宿主机路径就报 path_outside_directory，不留登记；目录以内的照常往下走", async () => {
+    const caller = { name: "codeos/confined", owner: "codeos", confine: true };
+    const ssh = gitRepo("confine-ssh", 'services:\n  db:\n    image: postgres:17\n    volumes: ["~/.ssh:/root/.ssh:ro"]\n');
+    const error = await rejectsWithCode(client.create({ ...caller, directory: ssh }), "path_outside_directory");
+    assert.match(error.message, /services\.db\.volumes\[0\]：~\/\.ssh 解开符号链接后不在代码目录/);
+    await rejectsWithCode(client.environment(caller), "environment_not_found");
+    // 副本里指出去的符号链接
+    const linked = gitRepo("confine-link", 'services:\n  db:\n    image: postgres:17\n    volumes: ["./keys:/keys"]\n');
+    symlinkSync(path.join(homedir(), ".ssh"), path.join(linked, "keys"));
+    await rejectsWithCode(client.create({ ...caller, directory: linked }), "path_outside_directory");
+    await rejectsWithCode(client.environment(caller), "environment_not_found");
+    // 不带 confine 的同一份 compose 走到准备镜像（这里没有内核）
+    await rejectsWithCode(client.create({ ...caller, confine: undefined, directory: linked }), "runtime_unavailable");
+    // 目录以内的写法也走到准备镜像
+    const inside = gitRepo("confine-inside", 'services:\n  db:\n    image: postgres:17\n    volumes: ["./data:/var/lib/postgresql/data"]\n');
+    await rejectsWithCode(client.create({ ...caller, name: "codeos/confined-ok", directory: inside }), "runtime_unavailable");
+  });
+
   test("create 的名字格式不对：bad_request", async () => {
     const repo = gitRepo("bad-name", "services:\n  app:\n    image: alpine:3.20\n");
     await rejectsWithCode(
@@ -346,7 +364,7 @@ describe("假服务端：真实 napboxd 发不出来的回应", () => {
     }
   }
   const status = {
-    version: "0.1.6",
+    version: "0.1.7",
     pid: 1,
     startedAt: "2026-11-08T00:00:00Z",
     environments: [],
@@ -387,6 +405,44 @@ describe("假服务端：真实 napboxd 发不出来的回应", () => {
     );
     const given = { ...base, files: ["a.yaml"], profiles: ["p"], environment: { A: "1" }, egress: "none" as const };
     assert.deepEqual(await paramsSent((c) => c.create(given)), given);
+  });
+
+  test("create 带 confine：先查 napboxd 的版本，旧版不发 create；结果里没有 confined 就报错", async () => {
+    const base = { name: "codeos/x", owner: "codeos", directory: "/r", confine: true };
+    const environment = {
+      name: "codeos/x", owner: "codeos", state: "running", worktree: "/r", ports: [], hostPorts: [], egress: "open",
+      variables: {}, unsetVariables: [], serviceExits: [],
+    };
+    /** 按版本回 status，再按 confined 回 create；返回收到的方法 */
+    async function attempt(version: string, confined: boolean | undefined, expect: string | undefined): Promise<string[]> {
+      const methodsSeen: string[] = [];
+      const socketPath = path.join(work, "fake-confine.sock");
+      rmSync(socketPath, { force: true });
+      const server = createServer((socket) => {
+        socket.on("error", () => {});
+        socket.setEncoding("utf8");
+        socket.once("data", (request) => {
+          const { method, params } = JSON.parse(request as string) as { method: string; params?: { confine?: boolean } };
+          methodsSeen.push(method);
+          if (method === "create") assert.equal(params?.confine, true);
+          const result = method === "status" ? { ...status, version } : { ...environment, confined };
+          socket.write(`${JSON.stringify({ id: 1, result })}\n`);
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+      try {
+        const call = new NapboxClient({ socketPath }).create(base);
+        if (expect) await rejectsWithCode(call, expect);
+        else assert.equal((await call).confined, true);
+      } finally {
+        server.close();
+      }
+      return methodsSeen;
+    }
+    assert.deepEqual(await attempt("0.1.6", undefined, "unknown_method"), ["status"]);
+    assert.deepEqual(await attempt("0.1.7", undefined, "protocol_error"), ["status", "create"]);
+    assert.deepEqual(await attempt("0.1.7", true, undefined), ["status", "create"]);
+    assert.deepEqual(await attempt("0.2.0", true, undefined), ["status", "create"]);
   });
 
   test("不是 JSON：protocol_error", async () => {

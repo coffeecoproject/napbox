@@ -19,6 +19,8 @@ actor ImageBuilder {
         var service: String
         /// 完整的构建输出写到这里，每次构建覆盖
         var log: URL
+        /// 怎么碰宿主机上的文件：Dockerfile 和忽略文件按它读，context 按它共享进构建虚拟机（HostShares）
+        var access: HostAccess
     }
 
     static let engineReference = "docker.io/moby/buildkit:v0.34.2"
@@ -78,7 +80,7 @@ actor ImageBuilder {
         let cache = try cacheVolume()
         let output = try prepareWorkDirectory("output")
         defer { try? FileManager.default.removeItem(at: output) } // napbox 自己的临时目录
-        let staged = try stage(dockerfile, context: request.build.context)
+        let staged = try stage(dockerfile, context: request.build.context, access: request.access)
         defer { try? FileManager.default.removeItem(at: staged) }
         let logs = try prepareLogs(request)
         defer {
@@ -133,9 +135,7 @@ actor ImageBuilder {
         guard FileManager.default.fileExists(atPath: build.context, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw NapboxError(.imageBuildFailed, "\(request.service) 的构建目录 \(build.context) 不存在")
         }
-        let written = build.dockerfile ?? "Dockerfile"
-        let path = written.hasPrefix("/") ? URL(fileURLWithPath: written) : URL(fileURLWithPath: build.context).appending(path: written)
-        let file = path.standardizedFileURL
+        let file = URL(fileURLWithPath: build.dockerfilePath)
         guard FileManager.default.fileExists(atPath: file.path) else {
             throw NapboxError(.imageBuildFailed, "\(request.service) 的 Dockerfile \(file.path) 不存在")
         }
@@ -146,22 +146,44 @@ actor ImageBuilder {
     /// 引擎先认这份同名的忽略文件，有它就不看构建目录里的 `.dockerignore`，所以内容是项目里生效的那一份
     /// （同样的先后）再加一条 `.napbox`：那是 napbox 自己写在 worktree 里的（ports.json），不进镜像，
     /// `COPY . .` 的缓存也不因为它失效。后面的规则优先，项目的规则放不回来。
-    private func stage(_ dockerfile: Dockerfile, context: String) throws(NapboxError) -> URL {
+    /// 这两样都按 access 读：confine 时不在代码目录以内（比如是指出去的符号链接）就报错
+    private func stage(_ dockerfile: Dockerfile, context: String, access: HostAccess) throws(NapboxError) -> URL {
         let staged = try prepareWorkDirectory("dockerfile")
         let ignoreName = "\(dockerfile.name).dockerignore"
         let candidates = [
             dockerfile.file.deletingLastPathComponent().appending(path: ignoreName),
             URL(fileURLWithPath: context).appending(path: ".dockerignore"),
         ]
-        do {
-            try Data(contentsOf: dockerfile.file).write(to: staged.appending(path: dockerfile.name))
-            var rules = Data()
-            if let own = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) { rules = try Data(contentsOf: own) }
-            rules.append(Data("\n**/.napbox\n".utf8))
-            try rules.write(to: staged.appending(path: ignoreName))
-        } catch {
-            throw NapboxError(.imageBuildFailed, "准备 \(dockerfile.file.path) 和忽略规则失败：\(error.localizedDescription)")
+        func read(_ url: URL) throws(NapboxError) -> Data? {
+            do {
+                return try access.read(url.path)
+            } catch {
+                switch error {
+                case .outside: throw NapboxError(.pathOutsideDirectory, access.outside(url.path))
+                case .unreadable(let reason): throw NapboxError(.imageBuildFailed, "读不了 \(url.path)：\(reason)")
+                }
+            }
         }
+        func write(_ data: Data, to url: URL) throws(NapboxError) {
+            do {
+                try data.write(to: url)
+            } catch {
+                throw NapboxError(.imageBuildFailed, "准备 \(dockerfile.file.path) 和忽略规则失败：\(error.localizedDescription)")
+            }
+        }
+        guard let content = try read(dockerfile.file) else {
+            throw NapboxError(.imageBuildFailed, "Dockerfile \(dockerfile.file.path) 不存在")
+        }
+        try write(content, to: staged.appending(path: dockerfile.name))
+        var rules = Data()
+        for candidate in candidates {
+            if let own = try read(candidate) {
+                rules = own
+                break
+            }
+        }
+        rules.append(Data("\n**/.napbox\n".utf8))
+        try write(rules, to: staged.appending(path: ignoreName))
         return staged
     }
 
@@ -255,6 +277,9 @@ actor ImageBuilder {
         let mac = try MACAddress(try AddressAllocator.macAddress(for: ip))
         let cpus = ProcessInfo.processInfo.activeProcessorCount
         let guardProgram = guardBinary
+        // context 只读：confine 时共享的是代码目录本身（只读），context 在虚拟机里从它绑定
+        let shares = HostShares(request.access, readOnly: true)
+        let context = [try shares.mount(request.build.context, destination: "/ctx")] + (shares.root(destination: "/napbox-confined").map { [$0] } ?? [])
         let pod = try LinuxPod("napbox-builder", vmm: vmm, vm: VMResources(cpus: cpus, memoryInBytes: Self.memoryBytes)) { c in
             c.interfaces = [NATInterface(ipv4Address: cidr, ipv4Gateway: gateway, macAddress: mac)]
             c.dns = DNS(nameservers: [AddressAllocator.gateway])
@@ -272,7 +297,7 @@ actor ImageBuilder {
             c.readonlyPaths = []
             c.mounts = LinuxContainer.defaultMounts() + [
                 .sharedMount(name: "cache", destination: "/var/lib/buildkit", options: []),
-                .share(source: request.build.context, destination: "/ctx", options: ["ro"]),
+            ] + context + [
                 .share(source: dockerfile.path, destination: "/dockerfile", options: ["ro"]),
                 .share(source: output.path, destination: "/out", options: []),
                 .share(source: guardProgram.path, destination: Self.guardPath, options: ["ro"]),

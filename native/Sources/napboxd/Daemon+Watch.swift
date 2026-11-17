@@ -104,7 +104,11 @@ extension Daemon {
             sessions[name]?.watchBuildError = nil
             return followUp
         }
-        let matcher = WatchMatcher(project: project, canonical: realDirectory) { try? String(contentsOfFile: $0, encoding: .utf8) }
+        // 构建上下文的忽略文件按 access 读（confine 的只读代码目录里的）。读不了当没有：只影响哪些变化不看
+        let access = record.hostAccess
+        let matcher = WatchMatcher(project: project, canonical: realDirectory) { path in
+            try? access.readText(path, written: path, "develop.watch")
+        }
         let session = WatchSession(name: name, environment: env, matcher: matcher) { [weak self] paths in
             Task { await self?.watchBatch(name, env, matcher, paths) }
         }
@@ -309,7 +313,7 @@ extension Daemon {
         guard running[name] === env, let record = store.state.environment(name), let project = record.definition else { return }
         print("环境 \(name)：依赖的文件变了，重新构建")
         do throws(NapboxError) {
-            _ = try await bringUp(name, project: project, egress: nil, rebuild: true) { _ in record }
+            _ = try await bringUp(name, project: project, access: record.hostAccess, egress: nil, rebuild: true) { _ in record }
         } catch {
             print("环境 \(name) 的 develop.watch 重建失败：\(error.message)")
             sessions[name, default: EnvSession()].watchBuildError = error.message

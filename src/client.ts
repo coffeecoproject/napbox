@@ -7,6 +7,7 @@
 //     中途断开时这次操作不一定没做，要用 status 或 environment 查当前状态。
 //   - protocol_error：回应看不懂（不是 JSON、字段或取值对不上），一般是客户端和 napboxd 版本差太多。
 //     不比较版本号：多出来的字段不管，旧 napboxd 没有的方法它自己报 unknown_method。
+//     例外是 create 的 confine：旧 napboxd 不认识这个参数，会不加限制照常起环境，所以先查版本，不够新就报 unknown_method。
 // - 不设超时：up 可能在拉镜像，napboxd 自己有 healthcheck 的等待上限。logs、exec、run、subscribe 可以用 signal 取消，
 //   取消后 Promise 以 signal.reason 拒绝。其余方法不收 signal：断开连接并不会停下 napboxd 里正在做的事。
 // - 回调返回 Promise 时等它完成才读下一条；回调抛错时结束这次调用，Promise 以那个错误拒绝。
@@ -68,9 +69,16 @@ export interface Output {
 
 type OnOutput = (output: Output) => void | Promise<void>;
 
-/** create 里 files、profiles、environment 不写或传 undefined 时是空的。compose 变量要显式给，不会读本进程的环境变量 */
-export type CreateOptions = Pick<CreateParams, "name" | "owner" | "directory" | "egress"> &
+/**
+ * create 里 files、profiles、environment 不写或传 undefined 时是空的。compose 变量要显式给，不会读本进程的环境变量。
+ * confine: true 时 compose 里 napbox 会读或会挂进环境的宿主机路径，解开符号链接后都要在 directory 以内，
+ * 否则报 path_outside_directory，不起环境；之后每次构建、起环境都按它再查
+ */
+export type CreateOptions = Pick<CreateParams, "name" | "owner" | "directory" | "egress" | "confine"> &
   Partial<Pick<CreateParams, "files" | "profiles" | "environment">>;
+
+/** 认 create 的 confine 的最早的 napboxd */
+export const CONFINE_SINCE = "0.1.7";
 
 /** up 的 environment 必须给：compose 变量替换用哪些变量由调用方决定（命令行给的是它自己的环境变量） */
 export type UpOptions = Pick<UpParams, "cwd" | "environment"> &
@@ -177,10 +185,27 @@ export class NapboxClient {
     });
   }
 
-  create(options: CreateOptions): Promise<EnvironmentInfo> {
-    const { name, owner, directory, files = [], profiles = [], environment = {}, egress } = options;
-    const params: CreateParams = { name, owner, directory, files, profiles, environment, egress };
-    return this.exchange({ method: methods.create, params, result: EnvironmentInfo });
+  /**
+   * 建调用方持有的环境。带 confine 时先查 napboxd 的版本：旧版不认识 confine，会不加限制照常起环境，
+   * 不够新时报 unknown_method、什么也不做。结果里没有 confined: true 时报 protocol_error
+   */
+  async create(options: CreateOptions): Promise<EnvironmentInfo> {
+    const { name, owner, directory, files = [], profiles = [], environment = {}, egress, confine } = options;
+    if (confine) {
+      const { version } = await this.status();
+      if (compareVersions(version, CONFINE_SINCE) < 0) {
+        throw new NapboxError(
+          "unknown_method",
+          `napboxd ${version} 不认识 confine（要 ${CONFINE_SINCE} 以上），带着它 create 会不加限制起环境：先运行 napbox setup 换成新版`,
+        );
+      }
+    }
+    const params: CreateParams = { name, owner, directory, files, profiles, environment, egress, confine: confine || undefined };
+    const info = await this.exchange({ method: methods.create, params, result: EnvironmentInfo });
+    if (confine && info.confined !== true) {
+      throw new NapboxError("protocol_error", `napboxd 建的环境 ${info.name} 没有标 confined: true，限制没有生效`);
+    }
+    return info;
   }
 
   /** 环境当前的信息，不唤醒 */
@@ -322,6 +347,17 @@ export class NapboxClient {
       socket.destroy();
     }
   }
+}
+
+/** 比较 napboxd 的版本号（数字.数字.数字，后面带的 -xxx 不看）。a 旧返回负数 */
+function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.split("-")[0]!.split(".").map((n) => Number.parseInt(n, 10) || 0);
+  const [x, y] = [parts(a), parts(b)];
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
 }
 
 function connect(socketPath: string): Promise<Socket> {

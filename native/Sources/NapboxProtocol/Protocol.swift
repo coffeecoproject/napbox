@@ -3,7 +3,7 @@
 import Foundation
 
 public enum NapboxVersion {
-    public static let current = "0.1.6"
+    public static let current = "0.1.7"
 }
 
 public enum Paths {
@@ -91,6 +91,8 @@ public enum ErrorCode: String, Sendable {
     case composeNotFound = "compose_not_found"
     case composeInvalid = "compose_invalid"
     case composeUnsupported = "compose_unsupported"
+    /// create 带了 confine：compose 里 napbox 会读或会挂的宿主机路径，解开符号链接后不在代码目录以内
+    case pathOutsideDirectory = "path_outside_directory"
     case notInRepository = "not_in_repository"
     case portUnavailable = "port_unavailable"
     case stateCorrupted = "state_corrupted"
@@ -195,10 +197,12 @@ public struct EnvironmentInfo: Codable, Sendable {
     public var snapshotError: String?
     /// 只在这次 up、reset 起环境之前从别的环境的快照复制了数据时才有：数据是哪个环境、什么时候的
     public var seededFrom: SeedSource?
+    /// create 带 confine 建的环境是 true（宿主机路径都限定在代码目录以内），别的没有这一项
+    public var confined: Bool?
 
     public init(name: String, owner: String?, state: EnvironmentState, worktree: String, ports: [PortInfo], hostPorts: [HostPortInfo], egress: EgressMode,
                 variables: [String: String], unsetVariables: [String], lastError: String? = nil, serviceExits: [ServiceExit] = [], watchError: String? = nil,
-                snapshotError: String? = nil, seededFrom: SeedSource? = nil) {
+                snapshotError: String? = nil, seededFrom: SeedSource? = nil, confined: Bool? = nil) {
         self.name = name
         self.owner = owner
         self.state = state
@@ -213,6 +217,7 @@ public struct EnvironmentInfo: Codable, Sendable {
         self.watchError = watchError
         self.snapshotError = snapshotError
         self.seededFrom = seededFrom
+        self.confined = confined
     }
 }
 
@@ -390,9 +395,14 @@ public struct CreateParams: Codable, Sendable {
     public var environment: [String: String]
     /// 出网模式；nil 时新环境是 open，已有的环境保持原样
     public var egress: EgressMode?
+    /// true：compose 里 napbox 会读或会挂进环境的宿主机路径（compose 文件、.env、env_file、volumes 的绑定、secrets、
+    /// build 的 context 和 Dockerfile、develop.watch 等），解开符号链接后都要在 directory 以内，否则报 path_outside_directory。
+    /// 记进登记，之后每次构建、起环境都按它查；打开后再 create 不能去掉。旧版 napboxd 不认识它会照常起环境：
+    /// 结果里有 confined: true 才算生效（TS 客户端先查 napboxd 的版本）
+    public var confine: Bool?
 
     public init(name: String, owner: String, directory: String, files: [String] = [], profiles: [String] = [],
-                environment: [String: String] = [:], egress: EgressMode? = nil) {
+                environment: [String: String] = [:], egress: EgressMode? = nil, confine: Bool? = nil) {
         self.name = name
         self.owner = owner
         self.directory = directory
@@ -400,6 +410,7 @@ public struct CreateParams: Codable, Sendable {
         self.profiles = profiles
         self.environment = environment
         self.egress = egress
+        self.confine = confine
     }
 }
 

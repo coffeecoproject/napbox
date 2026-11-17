@@ -8,7 +8,7 @@ napbox reads a project's compose file and gives every git worktree its own isola
 
 It is built on Apple's open-source [Containerization](https://github.com/apple/containerization) framework: one lightweight Linux VM per environment, with all its services in it.
 
-**Status: 0.1.5, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
+**Status: 0.1.7, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
 
 ## Requirements
 
@@ -43,6 +43,7 @@ Without Claude Code: `npx napbox setup`.
 - **Temporary environments.** `napbox up --temp <name>` starts a throwaway environment next to the dev one (an empty test database, for example), and `napbox down --temp <name>` deletes it. `napbox run <service>` starts a one-off environment, runs one service in the foreground and returns its exit code.
 - **Builds.** `build:` is built inside a dedicated VM with BuildKit; the build cache is shared by all environments.
 - **Network.** Environments cannot reach the host or the local network. `napbox egress none` also cuts off the internet, leaving only the services in the same environment.
+- **Environments owned by another program.** A program that runs coding agents on copies of a project (CodeOS, for example) can create environments itself with the TypeScript client: `new NapboxClient().create({ name: "codeos/goal-12", owner: "codeos", directory: "/path/to/copy" })`. Pass `confine: true` when the agent can edit that copy's compose and must not see anything else on the Mac: every host path napbox would read or mount (compose files, `.env`, `.napbox.yaml`, `env_file`, bind mounts, `secrets` files, the build `context` and Dockerfile, `.dockerignore`, `develop.watch` paths) must resolve, following symlinks, to a path inside `directory`, or `create` fails with `path_outside_directory` and nothing starts. napbox records the copy's real path and checks again before every build and start (wake, `reset`, restarts, `develop.watch` rebuilds), so replacing a folder, or the copy directory itself, with a symlink afterwards stops the environment from starting. The VM only gets the copy itself, so a symlink swapped in after the check resolves inside the VM, not on the Mac. The program owning the environment must keep the agent from deleting or recreating the copy directory itself, since a swap timed between the last check and the VM opening the directory cannot be caught. Results carry `confined: true`. The client checks that napboxd is 0.1.7 or newer before sending `confine`, because older versions ignore it and start the environment unrestricted.
 
 ## Commands
 

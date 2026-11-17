@@ -95,10 +95,9 @@ public actor Runtime {
         }
     }
 
-    /// 挂载的来源在宿主机上成不成立（secrets 的文件在不在、有没有同时挂目录和它里面的文件）。和准备镜像一样在登记
-    /// 环境之前查：不成立时不留下没用的登记。
-    public nonisolated func checkHostMounts(_ project: ComposeProject) throws(NapboxError) {
-        for s in project.services { try s.checkHostMounts() }
+    /// 挂载的来源在宿主机上成不成立（Service.checkHostMounts）。和准备镜像一样在登记环境之前查：不成立时不留下没用的登记。
+    public nonisolated func checkHostMounts(_ project: ComposeProject, access: HostAccess) throws(NapboxError) {
+        for s in project.services { try s.checkHostMounts(access) }
     }
 
     /// 先把要用的镜像都准备好（本地没有就拉；构建出来的 buildImages 已经准备好了），再查每个服务的镜像和 compose
@@ -118,7 +117,10 @@ public actor Runtime {
 
     /// 构建写了 build 的服务的镜像，规则和 Docker 一样：镜像还没有才构建，pull_policy: build 和 force（up --build）
     /// 每次都构建。build 定义一样的只构建一次。返回有没有镜像变了（构建了但内容一样不算），在跑的环境要靠它决定重不重启。
-    public func buildImages(_ project: ComposeProject, environment name: String, force: Bool) async throws(NapboxError) -> Bool {
+    /// - access：怎么碰宿主机上的文件（confine 的：Dockerfile 和忽略文件按它读，构建虚拟机只共享代码目录本身）。
+    ///   context 和 Dockerfile 在不在代码目录以内，调用方先查过（checkHostMounts）
+    public func buildImages(_ project: ComposeProject, environment name: String, force: Bool,
+                            access: HostAccess) async throws(NapboxError) -> Bool {
         let id = EnvironmentRecord.id(of: name)
         var builds: [(reference: String, build: Build, service: String, always: Bool)] = []
         for s in project.services {
@@ -139,7 +141,7 @@ public actor Runtime {
             var before: String?
             if let existing { before = try? await Images.platformDigest(existing) }
             let request = ImageBuilder.Request(reference: b.reference, build: b.build, service: b.service,
-                                               log: storage.buildLog(environment: id, service: b.service))
+                                               log: storage.buildLog(environment: id, service: b.service), access: access)
             let image = try await builder.build(request, store: store, vmm: vmm)
             if try await Images.platformDigest(image) != before { changed = true }
         }
@@ -205,6 +207,7 @@ public actor Runtime {
         let layout = try EnvironmentLayout(directory: storage.environmentDirectory(record))
         let addresses = try ServiceNetwork.addresses(project.services.map(\.name))
         let portVariables = PortVariables.variables(record.ports.filter { project.service($0.service)?.ports.contains($0.containerPort) == true })
+        let shares = HostShares(record.hostAccess)
 
         // 每个 ContainerPlan 打开一个日志文件：中途失败时把已经打开的关上（napboxd 常驻，唤醒反复失败时句柄会越积越多）
         var containers: [ContainerPlan] = []
@@ -216,10 +219,11 @@ public actor Runtime {
                 trace.image(s.name, reference: image.reference, digest: image.digest, platformDigest: try await Images.platformDigest(image))
                 containers.append(try await ContainerPlan(
                     service: s, image: image, layout: layout, portVariables: portVariables, freshRootfs: &freshRootfs, trace: trace,
-                    foreground: s.name == foreground?.service ? foreground : nil
+                    foreground: s.name == foreground?.service ? foreground : nil, shares: shares
                 ))
             }
-            pod = try await createPod(record, project: project, ip: ip, addresses: addresses, layout: layout, containers: containers, vmm: vmm)
+            pod = try await createPod(record, project: project, ip: ip, addresses: addresses, layout: layout, containers: containers,
+                                      shares: shares, vmm: vmm)
         } catch {
             for plan in containers { plan.log.close() }
             throw error
@@ -244,8 +248,11 @@ public actor Runtime {
 
     /// - ip：虚拟机在宿主机那个网段里的地址
     /// - addresses：每个服务在虚拟机里面那个网段的地址（ServiceNetwork）
+    /// - shares：和服务的容器（ContainerPlan）用的同一份。confine 时代码目录那份共享挂在网络小容器上，
+    ///   服务和它自己的源码目录都从那里绑定
     private func createPod(_ record: EnvironmentRecord, project: ComposeProject, ip: String, addresses: [String: String],
-                           layout: EnvironmentLayout, containers: [ContainerPlan], vmm: VZVirtualMachineManager) async throws(NapboxError) -> LinuxPod {
+                           layout: EnvironmentLayout, containers: [ContainerPlan], shares: HostShares,
+                           vmm: VZVirtualMachineManager) async throws(NapboxError) -> LinuxPod {
         let guardRootfs = try layout.guardRootfs(binary: guardBinary)
         let runtimeDisk = try layout.runtimeDisk(guardBinary: guardBinary, runc: RuntimeContainer.runc(in: supportDirectory), addresses: addresses)
         // 服务之间用服务名互相找：每个名字指到那个服务自己的地址
@@ -257,6 +264,11 @@ public actor Runtime {
         // 虚拟机的内存是各服务那一份加起来，用多少才向 macOS 要多少；核数和本机一样，空着的核不占资源
         let resources = VMResources(cpus: ProcessInfo.processInfo.activeProcessorCount,
                                     memoryInBytes: project.services.reduce(Self.vmOverheadBytes) { $0 + $1.memoryShareBytes })
+        // 有源码挂载才有要共享的宿主机目录：它们和服务的绑定挂载是同一批（project.sourcePaths）
+        let sources = GuardContainer.sources(project)
+        let sourceMounts = try sources.directories.enumerated().map { i, directory throws(NapboxError) in
+            try shares.mount(directory, destination: "/napbox-src/\(i)")
+        } + (project.hasSourceMounts ? shares.root(destination: GuardContainer.confinedRoot).map { [$0] } ?? [] : [])
         do {
             let cidr = try CIDRv4("\(ip)/24")
             let gateway = try IPv4Address(AddressAllocator.gateway)
@@ -281,10 +293,7 @@ public actor Runtime {
                 c.process.arguments = [GuardContainer.program]
                 // 它自己要在 vsock 上听 napboxd，重新挂文件时还要进服务的挂载命名空间：不带白名单
                 c.seccompProfile = .unconfined
-                let sources = GuardContainer.sources(project)
-                c.mounts = LinuxContainer.defaultMounts() + sources.directories.enumerated().map {
-                    .share(source: $1, destination: "/napbox-src/\($0)", options: [])
-                } + GuardContainer.populateMounts(project) + [GuardContainer.vmProcMount, GuardContainer.vmCgroupMount]
+                c.mounts = LinuxContainer.defaultMounts() + sourceMounts + GuardContainer.populateMounts(project) + [GuardContainer.vmProcMount, GuardContainer.vmCgroupMount]
                 // 只是上限，用多少才占多少。所有转发的连接都经过它（guard/mux.go），每条空闲连接约 25KB，
                 // 忙的连接最多再加额度那么多。超过上限它会被杀，环境转成休眠（watchGuard）
                 c.memoryInBytes = 256 * 1024 * 1024

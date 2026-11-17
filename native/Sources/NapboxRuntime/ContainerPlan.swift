@@ -47,13 +47,15 @@ struct ContainerPlan: Sendable {
     /// - portVariables：这个环境的端口变量，换掉 environment 里引用的（PortReferences）
     /// - freshRootfs：这次起环境新解包出来的根文件系统，同一个镜像的服务从它克隆（EnvironmentLayout.rootfs）
     /// - trace：记下根文件系统是怎么来的
+    /// - shares：宿主机路径怎么挂进虚拟机（confine 的从代码目录的共享绑定，那份共享由 Runtime.createPod 挂上）
     init(service s: Service, image: Containerization.Image, layout: EnvironmentLayout, portVariables: [String: String],
-         freshRootfs: inout [String: URL], trace: RunTrace, foreground: ForegroundService? = nil) async throws(NapboxError) {
+         freshRootfs: inout [String: URL], trace: RunTrace, foreground: ForegroundService? = nil,
+         shares: HostShares) async throws(NapboxError) {
         name = s.name
         self.foreground = foreground
         // up 在登记之前都查过一遍（Runtime.checkHostMounts、prepareImages）；唤醒、reset、按 restart 重启不经过那里，
-        // 宿主机上的文件可能已经变了
-        try s.checkHostMounts()
+        // 宿主机上的文件可能已经变了（confine 的：可能换成了指出去的符号链接）
+        try s.checkHostMounts(shares.access)
         let settings = try await ImageSettings(service: s, image: image)
         imageConfig = settings.config
         imageCreated = settings.created
@@ -87,11 +89,11 @@ struct ContainerPlan: Sendable {
                 // 和 Docker 一样：volumes 的来源不存在时建成目录（secrets 的文件不建，checkHostMounts 查过了）。来源是单个文件时，
                 // 框架共享它所在的目录，再把这个文件绑定进容器（Containerization 的 FileMount；虚拟机只能共享目录）
                 if case .bind = v.source, !FileManager.default.fileExists(atPath: path) {
-                    try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+                    try shares.access.createDirectory(path)
                 }
                 // 只读做在容器这一层，不做在虚拟机的共享上（和 Docker 一样靠挂载，服务没有权限重新挂载）：框架里同一个目录
                 // 只共享一次，只读的话网络小容器也发不出文件变化通知
-                extra.append(.share(source: path, destination: v.target, options: []))
+                extra.append(try shares.mount(path, destination: v.target))
                 if v.readOnly { readOnlySources.append(v.target) }
             }
         }
@@ -190,9 +192,11 @@ struct ImageSettings: Sendable {
 }
 
 extension Service {
-    /// 挂载的来源在宿主机上不成立的两种情况。只看宿主机上的文件，不用等：up 在构建、登记环境之前先查
-    /// （Runtime.checkHostMounts），不留下没用的登记。
-    func checkHostMounts() throws(NapboxError) {
+    /// 挂载的来源在宿主机上不成立的几种情况：confine 的路径不在代码目录以内了；secrets 的文件不在；同时挂了目录和它里面的文件。
+    /// 只看宿主机上的文件，不用等：up 在构建、登记环境之前先查（Runtime.checkHostMounts），不留下没用的登记；
+    /// 每次起环境建容器时再查（ContainerPlan）。
+    func checkHostMounts(_ access: HostAccess) throws(NapboxError) {
+        try access.check(self)
         for v in volumes {
             guard let path = v.source.hostPath else { continue }
             var isDir: ObjCBool = false
@@ -203,7 +207,8 @@ extension Service {
             }
             guard !isDir.boolValue else { continue }
             // 来源是单个文件，它所在的目录又整个挂了：框架 0.53.0 在这种组合下会把整目录那条挂载丢掉（LinuxPod 启动容器时
-            // 按共享的标签过滤，两条的标签一样），服务起得来但目录没挂上。与其悄悄少一条挂载，不如直接说
+            // 按共享的标签过滤，两条的标签一样），服务起得来但目录没挂上。与其悄悄少一条挂载，不如直接说。
+            // confine 的不走框架的这一步（HostShares 在虚拟机里绑定），也一样不放开：两种环境支持的写法不分叉
             let parent = (realDirectory(path) as NSString).deletingLastPathComponent
             if volumes.contains(where: { $0.source.hostPath.map { realDirectory($0) == parent } ?? false }) {
                 throw NapboxError(.composeUnsupported, "\(name) 同时挂了目录 \(parent) 和它里面的文件 \(path)：同一个服务里这样挂 napbox 现在不支持")

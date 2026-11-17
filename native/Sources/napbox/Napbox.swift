@@ -61,7 +61,7 @@ struct Status: ParsableCommand {
         }
         for env in result.environments {
             print("\n\(env.name)  \(env.state.rawValue)  \(env.worktree)")
-            if let owner = env.owner { print("  持有方：\(owner)") }
+            if let owner = env.owner { print("  持有方：\(owner)\(env.confined == true ? "（confine：只能用代码目录里的文件）" : "")") }
             for p in env.ports { print("  \(p.service):\(p.containerPort)\t\(env.variables[p.variable] ?? "")\t\(p.variable)") }
             for p in env.hostPorts { print("  本机 \(p.name)\t\(p.hostPort)\t\(p.variable)") }
             if let error = env.lastError { print("  最近出错：\(error)") }

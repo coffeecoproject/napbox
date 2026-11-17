@@ -17,6 +17,7 @@ export const errorCodes = [
   "compose_not_found",
   "compose_invalid",
   "compose_unsupported",
+  "path_outside_directory",
   "not_in_repository",
   "port_unavailable",
   "state_corrupted",
@@ -115,6 +116,8 @@ export const EnvironmentInfo = z.object({
   serviceExits: z.array(ServiceExit),
   /** 只在这次 up、reset 起环境之前从别的环境的快照复制了数据时才有 */
   seededFrom: SeedSource.optional(),
+  /** create 带 confine 建的环境是 true，别的没有这一项 */
+  confined: z.literal(true).optional(),
 });
 
 export const StatusResult = z.object({
@@ -162,6 +165,7 @@ export const CreateParams = z.object({
   profiles: z.array(z.string()),
   environment: z.record(z.string(), z.string()),
   egress: EgressMode.optional(),
+  confine: z.boolean().optional(),
 });
 
 /** from：不写换成空的；写了换成那个目录所在 worktree 的开发环境最新快照里的那份 */

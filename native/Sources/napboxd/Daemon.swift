@@ -160,7 +160,8 @@ actor Daemon {
             unsetVariables: record.definition?.unsetVariables ?? [],
             lastError: sessions[record.name]?.lastFailure?.message, serviceExits: sessions[record.name]?.exits ?? [],
             watchError: sessions[record.name]?.watchError,
-            snapshotError: record.snapshotSkipped?.summary
+            snapshotError: record.snapshotSkipped?.summary,
+            confined: record.confinedRoot != nil ? true : nil
         )
     }
 

@@ -1,7 +1,7 @@
 {
   "name": "napbox",
   "displayName": "napbox",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "给 coding agent 用的 Mac 本地开发环境：每个 worktree 一套隔离的数据库和后端服务，端口不冲突，闲置自动休眠，不依赖 Docker。",
   "author": {
     "name": "The napbox Authors",

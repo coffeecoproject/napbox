@@ -1,4 +1,4 @@
-// 读 compose：找文件 → 读 .env → 每份文件分别替换变量 → 按顺序合并 → 校验，得到 ComposeProject。
+// 读 compose：找文件 → 读 compose 文件和 .env → 每份文件分别替换变量 → 按顺序合并 → 校验，得到 ComposeProject。
 // 变量来源和 compose 一致：调用方的环境变量优先，其次是项目目录（第一份 compose 所在目录）里的 .env；
 // COMPOSE_PROJECT_NAME 总有值（projectName）。
 import Foundation
@@ -13,12 +13,16 @@ public struct ComposeInput: Sendable {
     public var profiles: [String]
     /// napbox run：只要其中一个服务和它依赖的
     public var run: ComposeRun?
+    /// 怎么碰宿主机上的文件：create 带 confine 时读的文件、存进定义的宿主机路径都要在代码目录以内，存的是真实路径
+    public var access: HostAccess
 
-    public init(files: [URL], callerEnvironment: [String: String], profiles: [String] = [], run: ComposeRun? = nil) {
+    public init(files: [URL], callerEnvironment: [String: String], profiles: [String] = [], run: ComposeRun? = nil,
+                access: HostAccess = .open) {
         self.files = files
         self.callerEnvironment = callerEnvironment
         self.profiles = profiles
         self.run = run
+        self.access = access
     }
 }
 
@@ -42,24 +46,37 @@ public enum ComposeLoader {
     public static func load(_ input: ComposeInput) throws(ComposeError) -> ComposeProject {
         guard let first = input.files.first else { throw ComposeError([.invalid("没有指定 compose 文件")]) }
         let projectDirectory = first.deletingLastPathComponent()
+        let access = input.access
+
+        // 先读 compose 文件（解析用不到 .env）：有读不到、越界的就不往下读它旁边的 .env 了
+        var texts: [(url: URL, text: String)] = []
+        var unreadable: [ComposeIssue] = []
+        for url in input.files {
+            do {
+                if let text = try access.readText(url.path, written: url.path, "compose 文件") { texts.append((url, text)) }
+                else { unreadable.append(.invalid("读不到 \(url.path)")) }
+            } catch {
+                unreadable.append(error)
+            }
+        }
+        guard unreadable.isEmpty else { throw ComposeError(unreadable) }
 
         var dotEnv: [String: String] = [:]
         let dotEnvURL = projectDirectory.appending(path: ".env")
-        if let text = try? String(contentsOf: dotEnvURL, encoding: .utf8) {
+        let dotEnvText: String?
+        do {
+            dotEnvText = try access.readText(dotEnvURL.path, written: dotEnvURL.path, ".env")
+        } catch {
+            throw ComposeError([error])
+        }
+        if let text = dotEnvText {
             for (k, v) in try DotEnv.parse(text, file: dotEnvURL.path, lookup: { input.callerEnvironment[$0] }) { dotEnv[k] = v }
         }
         let given: @Sendable (String) -> String? = { [dotEnv] name in input.callerEnvironment[name] ?? dotEnv[name] }
 
         var issues: [ComposeIssue] = []
         var trees: [(file: String, tree: YAMLTree)] = []
-        for url in input.files {
-            let text: String
-            do {
-                text = try String(contentsOf: url, encoding: .utf8)
-            } catch {
-                issues.append(.invalid("读不到 \(url.path)"))
-                continue
-            }
+        for (url, text) in texts {
             do {
                 trees.append((url.lastPathComponent, try YAMLTree.parse(text, file: url.lastPathComponent)))
             } catch {
@@ -85,7 +102,8 @@ public enum ComposeLoader {
         for p in (lookup("COMPOSE_PROFILES") ?? "").split(separator: ",") {
             profiles.insert(p.trimmingCharacters(in: .whitespaces))
         }
-        var builder = ComposeBuilder(projectDirectory: projectDirectory, lookup: lookup, activeProfiles: profiles, run: input.run)
+        var builder = ComposeBuilder(projectDirectory: projectDirectory, lookup: lookup, activeProfiles: profiles, run: input.run,
+                                     access: access)
         let project = builder.build(merged)
         guard builder.issues.isEmpty, var project else { throw ComposeError(builder.issues) }
         project.unsetVariables = interpolator.missing
@@ -119,30 +137,33 @@ public enum ComposeFiles {
     /// - 否则 `COMPOSE_FILE`（environment 里的，或 cwd 的 .env 里的；几个路径用 `:` 隔开，相对 cwd），和 compose 一样
     /// - 否则从 cwd 往上找到 worktree 根目录为止
     /// - environment：调用方的环境变量
-    public static func resolve(explicit: [String], environment: [String: String], cwd: URL, worktree: URL) throws(NapboxError) -> [URL] {
-        let fm = FileManager.default
+    /// - access：create 带 confine 时这里读的 .napbox.yaml 和 cwd 的 .env 都要在代码目录以内；
+    ///   找到的 compose 文件读的时候再查（ComposeLoader）
+    public static func resolve(explicit: [String], environment: [String: String], cwd: URL, worktree: URL,
+                               access: HostAccess = .open) throws(NapboxError) -> [URL] {
+        let present = { (url: URL) in access.present(url.path) }
         func listed(_ paths: [String], notFound: String) throws(NapboxError) -> [URL] {
             let urls = paths.map { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : cwd.appending(path: $0) }.map(\.standardizedFileURL)
-            for u in urls where !fm.fileExists(atPath: u.path) {
+            for u in urls where !present(u) {
                 throw NapboxError(.composeNotFound, "\(notFound)：\(u.path)")
             }
             return urls
         }
         if !explicit.isEmpty { return try listed(explicit, notFound: "找不到 compose 文件") }
         let config = worktree.appending(path: ".napbox.yaml")
-        if fm.fileExists(atPath: config.path) {
-            return try fromConfig(config, worktree: worktree)
+        if let text = try readText(config, access: access) {
+            return try fromConfig(text, worktree: worktree, present: present)
         }
-        let fromVariable = try composeFileVariable(environment, cwd: cwd)
+        let fromVariable = try composeFileVariable(environment, cwd: cwd, access: access)
         if !fromVariable.isEmpty { return try listed(fromVariable, notFound: "COMPOSE_FILE 里写的 compose 文件不存在") }
         // worktree 是 git 给出的真实路径，当前目录也要解开符号链接（比如 /tmp、/var），否则对不上、找不到头
         var dir = cwd.resolvingSymlinksInPath()
         let root = worktree.resolvingSymlinksInPath()
         var looked: [String] = []
         while true {
-            if let name = names.first(where: { fm.fileExists(atPath: dir.appending(path: $0).path) }) {
+            if let name = names.first(where: { present(dir.appending(path: $0)) }) {
                 var files = [dir.appending(path: name)]
-                if let o = overrideNames.first(where: { fm.fileExists(atPath: dir.appending(path: $0).path) }) {
+                if let o = overrideNames.first(where: { present(dir.appending(path: $0)) }) {
                     files.append(dir.appending(path: o))
                 }
                 return files
@@ -159,10 +180,11 @@ public enum ComposeFiles {
 
     /// `COMPOSE_FILE` 里列的路径，没设是空的。分隔符是 `:`，`COMPOSE_PATH_SEPARATOR` 可以换。
     /// 两个变量都是调用方环境里的优先，其次是 cwd 的 .env 里的。
-    private static func composeFileVariable(_ environment: [String: String], cwd: URL) throws(NapboxError) -> [String] {
+    private static func composeFileVariable(_ environment: [String: String], cwd: URL,
+                                            access: HostAccess) throws(NapboxError) -> [String] {
         var dotEnv: [String: String] = [:]
         let dotEnvURL = cwd.appending(path: ".env")
-        if let text = try? String(contentsOf: dotEnvURL, encoding: .utf8) {
+        if let text = try readText(dotEnvURL, access: access) {
             do {
                 for (k, v) in try DotEnv.parse(text, file: dotEnvURL.path, lookup: { environment[$0] }) { dotEnv[k] = v }
             } catch {
@@ -174,14 +196,21 @@ public enum ComposeFiles {
         return files.components(separatedBy: value("COMPOSE_PATH_SEPARATOR") ?? ":").filter { !$0.isEmpty }
     }
 
-    private static func fromConfig(_ config: URL, worktree: URL) throws(NapboxError) -> [URL] {
+    /// 读 .napbox.yaml、cwd 的 .env：不存在是 nil
+    private static func readText(_ url: URL, access: HostAccess) throws(NapboxError) -> String? {
+        do {
+            return try access.readText(url.path, written: url.path, url.lastPathComponent)
+        } catch {
+            throw ComposeError([error]).napboxError
+        }
+    }
+
+    private static func fromConfig(_ text: String, worktree: URL, present: (URL) -> Bool) throws(NapboxError) -> [URL] {
         let tree: YAMLTree
         do {
-            tree = try YAMLTree.parse(String(contentsOf: config, encoding: .utf8), file: ".napbox.yaml")
-        } catch let error as ComposeError {
-            throw NapboxError(.composeInvalid, error.issues.map(\.description).joined(separator: "\n"))
+            tree = try YAMLTree.parse(text, file: ".napbox.yaml")
         } catch {
-            throw NapboxError(.composeInvalid, "读不到 \(config.path)：\(error.localizedDescription)")
+            throw NapboxError(.composeInvalid, error.issues.map(\.description).joined(separator: "\n"))
         }
         guard let entries = tree.entries else { throw NapboxError(.composeInvalid, ".napbox.yaml 要是映射，例如 compose: server/compose.yaml") }
         var paths: [String] = []
@@ -195,7 +224,7 @@ public enum ComposeFiles {
         }
         guard !paths.isEmpty else { throw NapboxError(.composeInvalid, ".napbox.yaml：compose 要写一个路径或路径列表") }
         let urls = paths.map { worktree.appending(path: $0).standardizedFileURL }
-        for u in urls where !FileManager.default.fileExists(atPath: u.path) {
+        for u in urls where !present(u) {
             throw NapboxError(.composeNotFound, ".napbox.yaml 里写的 compose 文件不存在：\(u.path)")
         }
         return urls

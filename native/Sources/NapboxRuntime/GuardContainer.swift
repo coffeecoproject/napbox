@@ -16,6 +16,8 @@ enum GuardContainer {
     static let notifyPort: UInt32 = 5301
     /// 它报告卡在内存上的服务的 vsock 端口（guard/memwatch.go）
     static let memoryPort: UInt32 = 5302
+    /// confine 的环境：代码目录本身挂在它这里，虚拟机才共享它（HostShares.root）。它自己不用
+    static let confinedRoot = "/napbox-confined"
 
     /// 环境里的源码挂载在它这边怎么放：它也挂一份，通知才发得到（同一个目录在虚拟机里是同一份文件）。
     /// 服务挂单个文件时它挂这个文件所在的目录：虚拟机只能共享目录，服务那边也是共享这个目录再绑定其中的文件

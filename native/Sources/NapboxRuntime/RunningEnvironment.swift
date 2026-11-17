@@ -611,9 +611,11 @@ public actor RunningEnvironment {
                 try writer.writeEntry(entry: entry, data: nil)
                 continue
             }
-            let descriptor = open(file.hostPath, O_RDONLY | O_NONBLOCK)
+            // 路径是解开符号链接后的写法（监听的目录按真实路径算，下面一层层列出来的）。打开时哪一段是符号链接就不读：
+            // 那是列出来之后才换上的，跟着它会读到监听范围以外的文件
+            let descriptor = open(file.hostPath, O_RDONLY | O_NONBLOCK | O_NOFOLLOW_ANY)
             guard descriptor >= 0 else {
-                if errno == ENOENT { continue }
+                if errno == ENOENT || errno == ELOOP { continue }
                 throw NapboxError(.internalError, "读不了 \(file.hostPath)：\(String(cString: strerror(errno)))")
             }
             defer { close(descriptor) }

@@ -116,6 +116,11 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
         public var summary: String { "最近一次停下（\(ISO8601DateFormatter().string(from: at))）没拍成快照：\(reason)" }
     }
 
+    /// create 带了 confine：代码目录（worktree）create 时的真实路径。之后每次读 compose、起环境，宿主机路径都要在它以内
+    /// （Confinement），它本身也得还是这个目录（不按 worktree 重新解析：目录被换成符号链接时不跟过去）。
+    /// 只有调用方持有的环境有；不受限是 nil。打开以后不能再关掉
+    public var confinedRoot: String?
+
     /// 要分几步、中途停下会留下半截状态的操作
     public enum PendingOperation: Codable, Equatable, Sendable {
         /// 回收（down、worktree 删掉、临时环境销毁）：数据移走（或删掉）以后还要放端口、删登记
@@ -127,7 +132,7 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
 
     public init(name: String, project: String?, mainRepository: String?, worktree: String, owner: Owner, ports: [PortAssignment] = [],
                 ip: String? = nil, definition: ComposeProject? = nil, completedServices: [String] = [], egress: EgressMode = .open,
-                temporary: String? = nil) {
+                temporary: String? = nil, confinedRoot: String? = nil) {
         self.name = name
         self.project = project
         self.mainRepository = mainRepository
@@ -139,7 +144,11 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
         self.completedServices = completedServices
         self.egress = egress
         self.temporary = temporary
+        self.confinedRoot = confinedRoot
     }
+
+    /// 怎么碰宿主机上的文件：confine 的限定在 confinedRoot 里
+    public var hostAccess: HostAccess { confinedRoot.map { .confined(Confinement(root: $0)) } ?? .open }
 
     /// 启用的服务的端口：转发、列出、写进 ports.json。其余只是锁着留给没启用的 profile，连上来直接断开
     public var activePorts: [PortAssignment] {

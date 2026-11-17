@@ -8,7 +8,7 @@ napbox 按项目的 compose 文件，给每个 git worktree 起一套隔离的�
 
 底层是苹果开源的 [Containerization](https://github.com/apple/containerization)：一个环境一台轻量的 Linux 虚拟机，环境里的服务都在这台虚拟机里。
 
-**状态：0.1.5，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
+**状态：0.1.7，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
 
 ## 要求
 
@@ -43,6 +43,7 @@ agent 第一次要起服务时，napbox 会报还没准备好，agent 就去调�
 - **临时环境。** `napbox up --temp <名字>` 在开发环境旁边另起一个用完就扔的环境（比如测试用的空库），`napbox down --temp <名字>` 删掉它。`napbox run <服务>` 临时起一个环境，在前台跑一个服务，返回它的退出码。
 - **构建。** 写了 `build:` 的服务在单独的虚拟机里用 BuildKit 构建，所有环境共用一份构建缓存。
 - **网络。** 环境访问不到宿主机和局域网。`napbox egress none` 还会断开外网，只剩同一个环境里的服务能互相访问。
+- **由别的程序持有的环境。** 在项目副本上跑编程 agent 的程序（比如 CodeOS）可以用 TypeScript 客户端自己建环境：`new NapboxClient().create({ name: "codeos/goal-12", owner: "codeos", directory: "/副本/路径" })`。agent 能改副本里的 compose、又不该碰本机别的文件时传 `confine: true`：napbox 会读或会挂进环境的宿主机路径（compose 文件、`.env`、`.napbox.yaml`、`env_file`、绑定挂载、`secrets` 的文件、构建的 `context` 和 Dockerfile、`.dockerignore`、`develop.watch` 的路径），解开符号链接后都要在 `directory` 以内，否则 `create` 报 `path_outside_directory`，什么也不起。napbox 记下副本目录的真实路径，之后每次构建、起环境（唤醒、`reset`、按 restart 重启、`develop.watch` 重建）前都再查：之后把里面的目录、或者副本目录本身换成符号链接，环境就起不来。虚拟机只共享副本目录本身，查完之后再换上的符号链接在虚拟机里解析，到不了本机。持有环境的程序要保证 agent 删不掉、建不了副本目录本身：恰好卡在最后一次检查和虚拟机打开目录之间换掉它，napbox 拦不住。结果里带 `confined: true`。旧版 napboxd 不认识 `confine`、会不加限制照常起环境，所以客户端先确认 napboxd 是 0.1.7 以上再发。
 
 ## 命令
 

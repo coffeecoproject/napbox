@@ -662,6 +662,96 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     await client.down(throwaway, { discardData: true });
   });
 
+  test("create 带 confine：目录以内的挂载照常可用，里面指出去的符号链接到不了本机；越界的不起；之后换成指出去的链接，唤醒被拦下", async () => {
+    const confined = { name: "codeos/goal-1-confined", owner: "codeos" };
+    const outside = path.join(work, "goal/confined/outside");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(path.join(outside, "secret.txt"), "HOST-SECRET\n");
+    const dir = repo(
+      "goal/confined/repo",
+      [
+        "secrets:",
+        "  key: {file: ./keys/key.txt}",
+        "services:",
+        "  app:",
+        "    image: alpine:3.20",
+        '    volumes: ["./src:/src", "./conf/app.conf:/etc/app.conf:ro", "./data/new:/data"]',
+        "    secrets: [key]",
+        '    command: ["sleep", "100000"]',
+        "    stop_grace_period: 1s",
+        "",
+      ].join("\n"),
+    );
+    mkdirSync(path.join(dir, "src"));
+    mkdirSync(path.join(dir, "conf"));
+    mkdirSync(path.join(dir, "keys"));
+    writeFileSync(path.join(dir, "src/a.txt"), "inside\n");
+    writeFileSync(path.join(dir, "conf/app.conf"), "v1\n");
+    writeFileSync(path.join(dir, "keys/key.txt"), "k\n");
+    symlinkSync(outside, path.join(dir, "src/abs"));
+    symlinkSync("../../outside", path.join(dir, "src/rel"));
+    const shell = async (script: string) => {
+      let text = "";
+      const { exitCode } = await client.exec({
+        target: confined,
+        service: "app",
+        command: ["sh", "-c", script],
+        onOutput: (o) => {
+          text += Buffer.from(o.data).toString();
+        },
+      });
+      return { exitCode, text };
+    };
+
+    // 先不受限建一次，再带 confine：改成受限，按受限的方式重新起
+    assert.equal((await client.create({ ...confined, directory: dir })).confined, undefined);
+    const info = await client.create({ ...confined, directory: dir, confine: true });
+    assert.equal(info.confined, true);
+    assert.equal((await client.environment(confined)).confined, true);
+    assert.equal((await shell("cat /src/a.txt /etc/app.conf /run/secrets/key")).text, "inside\nv1\nk\n");
+    // 不存在的来源在代码目录里建成目录，容器写的宿主机上看得到
+    assert.equal((await shell("echo written > /data/w")).exitCode, 0);
+    assert.equal(readFileSync(path.join(dir, "data/new/w"), "utf8"), "written\n");
+    // 宿主机改了单个文件，容器里跟上；只读的写不进去
+    writeFileSync(path.join(dir, "conf/app.conf"), "v2\n");
+    assert.equal((await shell("cat /etc/app.conf")).text, "v2\n");
+    assert.notEqual((await shell("echo x > /etc/app.conf")).exitCode, 0);
+    // 挂进去的目录里指出去的符号链接由虚拟机解析，读不到本机的文件
+    const probe = await shell("cat /src/abs/secret.txt /src/rel/secret.txt 2>&1; true");
+    assert.doesNotMatch(probe.text, /HOST-SECRET/);
+
+    // 越界的 compose 不起，在跑的环境不受影响
+    const ssh = repo("goal/confined/ssh", 'services:\n  db:\n    image: alpine:3.20\n    volumes: ["~/.ssh:/root/.ssh:ro"]\n');
+    const sshTarget = { name: "codeos/goal-1-ssh", owner: "codeos" };
+    await rejectsWithCode(client.create({ ...sshTarget, directory: ssh, confine: true }), "path_outside_directory");
+    await rejectsWithCode(client.environment(sshTarget), "environment_not_found");
+    // 打开了就不能去掉
+    await rejectsWithCode(client.create({ ...confined, directory: dir }), "bad_request");
+
+    // 建好以后把挂载的目录换成指出去的链接：唤醒前再查，拦下来，说明哪个服务、哪个字段
+    await client.sleep(confined);
+    renameSync(path.join(dir, "src"), path.join(dir, "src.real"));
+    symlinkSync(outside, path.join(dir, "src"));
+    const error = await rejectsWithCode(client.wake(confined), "path_outside_directory");
+    assert.match(error.message, /services\.app\.volumes（挂到 \/src）/);
+    rmSync(path.join(dir, "src"));
+    renameSync(path.join(dir, "src.real"), path.join(dir, "src"));
+    assert.equal((await client.wake(confined)).state, "running");
+    assert.equal((await shell("cat /src/a.txt")).text, "inside\n");
+
+    // 代码目录本身换成符号链接（rmdir 再 ln -s）：按 create 时记下的真实路径查，不跟过去
+    await client.sleep(confined);
+    renameSync(dir, `${dir}.real`);
+    mkdirSync(path.join(outside, "src"), { recursive: true });
+    symlinkSync(outside, dir);
+    const swapped = await rejectsWithCode(client.wake(confined), "path_outside_directory");
+    assert.match(swapped.message, /本身被换掉了/);
+    rmSync(dir);
+    renameSync(`${dir}.real`, dir);
+    assert.equal((await client.wake(confined)).state, "running");
+    await client.down(confined, { discardData: true });
+  });
+
   test("subscribe 按持有方过滤：别的持有方的事件收不到", () => {
     const seen = new Set(events.map((e) => e.owner));
     assert.deepEqual([...seen], ["codeos"], "worktree 持有的环境的事件不该送到 owner 过滤的订阅");

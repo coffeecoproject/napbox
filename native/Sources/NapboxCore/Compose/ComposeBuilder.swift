@@ -10,6 +10,8 @@ struct ComposeBuilder {
     var activeProfiles: Set<String>
     /// napbox run：只留要跑的那个服务和它依赖的
     var run: ComposeRun?
+    /// 怎么碰宿主机上的文件：create 带 confine 时宿主机路径都要在代码目录以内，存的是真实路径
+    var access: HostAccess = .open
     var homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
 
     private(set) var issues: [ComposeIssue] = []
@@ -76,7 +78,8 @@ struct ComposeBuilder {
                     for (k, _) in v.entries ?? [] where k != "file" {
                         issues.append(.unsupported("secrets.\(name).\(k)：只支持 file"))
                     }
-                    secrets[name] = resolve(file).path
+                    // 越界的（已经报过错）记成 nil，同上
+                    secrets.updateValue(hostPath(file, "secrets.\(name).file"), forKey: name)
                 }
             default:
                 if key.hasPrefix("x-") { continue }
@@ -335,7 +338,8 @@ struct ComposeBuilder {
                 return nil
             }
             rule.action = action
-            rule.path = resolve(path).path
+            guard let hostPath = hostPath(path, "\(at).path") else { return nil }
+            rule.path = hostPath
             if action.syncs, rule.target == nil { issues.append(.invalid("\(at)：\(action.rawValue) 要写 target")) }
             if action == .syncExec, rule.exec == nil { issues.append(.invalid("\(at)：sync+exec 要写 exec.command")) }
             return rule
@@ -437,7 +441,14 @@ struct ComposeBuilder {
             }
             guard let path else { issues.append(.invalid("\(p)[\(i)]：要写文件路径")); continue }
             let url = resolve(path)
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            let read: String?
+            do {
+                read = try access.readText(url.path, written: path, p)
+            } catch {
+                issues.append(error)
+                continue
+            }
+            guard let text = read else {
                 if required { issues.append(.invalid("\(p)：读不到 \(url.path)")) }
                 continue
             }
@@ -453,14 +464,23 @@ struct ComposeBuilder {
     private mutating func build(_ v: YAMLTree, _ p: String) -> Build? {
         guard let entries = ComposeMerge.asBuild(v).entries else { issues.append(.invalid("\(p)：要是路径或映射")); return nil }
         var b = Build(context: projectDirectory.path, dockerfile: nil, target: nil, args: [:])
+        var context = "."
         for (k, kv) in entries {
             switch k {
-            case "context": if let c = scalar(kv, "\(p).context") { b.context = resolve(c).path }
+            case "context": if let c = scalar(kv, "\(p).context") { b.context = resolve(c).path; context = c }
             case "dockerfile": b.dockerfile = scalar(kv, "\(p).dockerfile")
             case "target": b.target = scalar(kv, "\(p).target")
             case "args": b.args = environment(kv, "\(p).args")
             default: issues.append(.unsupported("\(p).\(k)：第一版只支持 context、dockerfile、target、args"))
             }
+        }
+        // context 和 Dockerfile（没写也是 context 里的 Dockerfile）都是要读的宿主机路径。dockerfile 照旧存相对 context 的写法，
+        // 换成真实路径后（confine）相对的是真实的 context
+        guard let realContext = hostPath(b.context, "\(p).context", written: context),
+              let realDockerfile = hostPath(b.dockerfilePath, "\(p).dockerfile", written: b.dockerfile ?? "Dockerfile") else { return nil }
+        if realContext != b.context || realDockerfile != b.dockerfilePath {
+            b.dockerfile = PathText.relative(realDockerfile, from: realContext)
+            b.context = realContext
         }
         return b
     }
@@ -563,7 +583,8 @@ struct ComposeBuilder {
             }
             let isPath = source.hasPrefix(".") || source.hasPrefix("/") || source.hasPrefix("~")
             if type == "bind" || (type == nil && isPath) {
-                result.append(VolumeMount(source: .bind(resolve(source).path), target: target, readOnly: readOnly))
+                guard let path = hostPath(source, ip) else { continue }
+                result.append(VolumeMount(source: .bind(path), target: target, readOnly: readOnly))
             } else if declared.contains(source) {
                 result.append(VolumeMount(source: .named(source), target: target, readOnly: readOnly))
             } else {
@@ -678,6 +699,18 @@ struct ComposeBuilder {
             }
         }
         return memory
+    }
+
+    /// 会被读或挂进环境的宿主机路径（写法同 resolve），按 access 定下存进定义的路径：confine 时是真实路径，
+    /// 不在代码目录以内的报错、返回 nil
+    /// - written：报错时说的写法，默认就是 path
+    private mutating func hostPath(_ path: String, _ p: String, written: String? = nil) -> String? {
+        let resolved = resolve(path).path
+        guard let placed = access.place(resolved) else {
+            issues.append(.outside("\(p)：\(access.outside(written ?? path))"))
+            return nil
+        }
+        return placed
     }
 
     /// 相对路径相对项目目录；`~` 是用户目录。

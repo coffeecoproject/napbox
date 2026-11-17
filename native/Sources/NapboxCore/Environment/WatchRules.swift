@@ -131,8 +131,7 @@ public struct WatchMatcher: Sendable {
             var contextIgnore: IgnorePatterns?
             if let build = service.build {
                 context = canonical(build.context)
-                let dockerfile = (build.context as NSString).appendingPathComponent(build.dockerfile ?? "Dockerfile")
-                if let text = readFile(dockerfile + ".dockerignore") ?? readFile((build.context as NSString).appendingPathComponent(".dockerignore")) {
+                if let text = readFile(build.dockerfilePath + ".dockerignore") ?? readFile((build.context as NSString).appendingPathComponent(".dockerignore")) {
                     contextIgnore = IgnorePatterns(text.components(separatedBy: .newlines))
                 }
             }
