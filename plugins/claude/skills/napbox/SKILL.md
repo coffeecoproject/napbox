@@ -34,23 +34,28 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 
 - **被测的那一套和线上一样组装**：入口代理、构建好的前后端都写成 compose 服务，页面测试连这一套，不连开发服务器。
 - **每个 worker 一套临时环境**：测试脚本按 worker 数起 `npx napbox up --temp e2e-<编号>`，跑完 `npx napbox down --temp e2e-<编号>`。各套有自己的数据库，并行互不干扰。
-- **浏览器是环境里的一个服务**，跑 Playwright 自带的 `run-server`，用的是项目自己装好的 Playwright（把仓库目录只读挂进去，pnpm 的软链接、monorepo 子目录里的依赖都能解析）：
+- **浏览器是环境里的一个服务**，跑 Playwright 自带的 `run-server`，用的是项目自己装好的 Playwright（把仓库目录只读挂进去，pnpm 的软链接、monorepo 子目录里的依赖都能解析）。写在单独一个 compose 文件里（比如 `e2e/browser.compose.yaml`），起页面测试的环境时和被测的那份一起传给 `up`（`--file` 给两次，按顺序合并）；没有被测环境的场合（比如往开发环境里录数据）也能单独起一套只有浏览器的：
 
   ```yaml
-  browser:
-    image: mcr.microsoft.com/playwright:v1.60.0-noble   # 和项目装的 Playwright 同一版本
-    init: true
-    shm_size: 1g
-    volumes:
-      - .:/work:ro   # 仓库根目录；compose 在子目录里就写 ..
-    command: ["node", "/work/node_modules/@playwright/test/cli.js", "run-server", "--port", "3000", "--host", "0.0.0.0"]
-    ports: ["3000"]
+  services:
+    browser:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble   # 和项目装的 Playwright 同一版本
+      init: true
+      shm_size: 1g
+      volumes:
+        - ..:/work:ro   # 仓库根目录，相对这份 compose 所在的目录
+      command: ["node", "/work/node_modules/@playwright/test/cli.js", "run-server", "--port", "3000", "--host", "0.0.0.0"]
+      ports: ["3000"]
+      healthcheck:   # 端口通了才算起好，up 返回后就能连
+        test: ["CMD", "node", "-e", "require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"]
+        interval: 1s
+        retries: 30
   ```
 
   `cli.js` 的路径按项目里装 Playwright 的位置写（monorepo 里可能在 `e2e/node_modules` 下，只装了 `playwright` 的就是 `node_modules/playwright/cli.js`）。
-- **本机的测试运行器连它**：Playwright 配置里 `use.connectOptions.wsEndpoint` 设成 `ws://` 加这套环境的 `NAPBOX_BROWSER_3000`，每个 worker 连自己那套环境的浏览器。
-- **页面地址写服务名**：浏览器在环境里，`baseURL` 写 `http://gateway:8080` 这类服务名加容器端口，不写 napbox 分给本机的端口。
-- **测试里直接调接口**（比如准备数据）：`page.request`、`context.request` 由环境里的浏览器发，照样用服务名。Playwright 的 `request` 夹具和 `request.newContext()` 在本机发请求，认不得服务名（报 `socket hang up`），要给它单独传本机地址（这套环境的 `NAPBOX_<服务>_<端口>`）。
+- **本机的测试运行器连它**：Playwright 配置里 `use.connectOptions` 写 `{ wsEndpoint: 'ws://' + 这套环境的 NAPBOX_BROWSER_3000 + '/', exposeNetwork: '<loopback>' }`，每个 worker 连自己那套环境的浏览器。
+- **用完整的 Chromium**：`use` 里同时写 `channel: 'chromium'`，浏览器服务按它启动镜像里装着的完整 Chromium。不写时用的是 Playwright 默认的精简版无界面浏览器（`chrome-headless-shell`），和用户的浏览器有差别。napbox 的环境是 Linux ARM，没有 Chrome 和 Edge，`channel: 'chrome'` 用不了，Chromium 和 Chrome 同一个内核。项目里有几份 Playwright 配置连同一个浏览器服务时（比如页面测试和录数据），连法和 `channel` 放在一个共用的模块里，各份配置引用它。
+- **页面地址用 napbox 分给本机的地址**（`127.0.0.1:<端口>`，和测试在本机调接口用的同一个）：`exposeNetwork` 让浏览器打开的 `127.0.0.1` 经测试的连接回到本机，环境断网（`egress none`）时也通。这样本机 `request` 登录拿到的 cookie 交给浏览器照样能用，页面也算安全来源，`crypto.randomUUID`、剪贴板、通知这些只在安全来源能用的接口照常可用。不要写服务名（`http://gateway`）：它不算安全来源，cookie 的域名也和本机调接口的对不上。
 - **版本要一致**：镜像 tag 和项目装的 Playwright 同一版本，镜像里的浏览器是按版本配的，不一致时报找不到浏览器；测试运行器和浏览器服务的 Playwright 版本不同时，一连就报 `Playwright version mismatch`。升级 Playwright 时一起改镜像 tag。
 - **上传、下载、截图、trace 照常用**：`setInputFiles` 传本机的文件，下载 `saveAs`、截图、trace 都写在本机的输出目录。没有有头的窗口，失败了看 trace（`npx playwright show-trace`），不要为了看窗口改回本机浏览器。
 - **截图对比的基准图用环境里这个浏览器拍**（Linux、arm64），镜像或 Playwright 版本变了要重拍。
