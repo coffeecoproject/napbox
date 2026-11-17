@@ -9,7 +9,7 @@
   },
   "homepage": "https://github.com/coffeecoproject/napbox",
   "repository": "https://github.com/coffeecoproject/napbox",
-  "license": "Apache-2.0",
+  "license": "FSL-1.1-ALv2",
   "keywords": [
     "docker-compose",
     "worktree",

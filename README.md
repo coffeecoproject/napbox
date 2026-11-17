@@ -95,6 +95,16 @@ Not supported, among others: `read_only`, `cpus`, `pids_limit`, `security_opt`, 
 - Memory is returned to macOS only when an environment sleeps.
 - There is no swap in the virtual machine. When a service stalls on memory (at its own limit, or with the whole environment's memory used up), napbox ends the process using the most memory and says why in the service's log, instead of letting it hang.
 
+## Contributing
+
+Bug reports and ideas are welcome as [issues](https://github.com/coffeecoproject/napbox/issues).
+
+Code contributions will require signing a Contributor License Agreement (CLA). You keep the copyright to your contribution; the CLA lets coffeecoproject license it under the project's current license and under other terms in the future, including commercial ones. The CLA is not in place yet, so pull requests are not accepted for now. Please open an issue instead.
+
 ## License
 
-[Apache License 2.0](LICENSE). The npm package bundles third-party code; see [NOTICE](NOTICE).
+[Functional Source License 1.1, ALv2 Future License](LICENSE) (FSL-1.1-ALv2). You can use, modify and redistribute napbox for any purpose, including using it at work on commercial projects, except making it available to others in a commercial product or service that substitutes for napbox or offers substantially similar functionality. Each version also becomes available under the Apache License 2.0 two years after it is released.
+
+Versions 0.1.7 and earlier were released under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) and remain under it.
+
+The npm package bundles third-party code; see [NOTICE](NOTICE).

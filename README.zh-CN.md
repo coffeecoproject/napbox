@@ -95,6 +95,16 @@ agent 第一次要起服务时，napbox 会报还没准备好，agent 就去调�
 - 内存只在环境休眠时才还给 macOS。
 - 虚拟机没有交换空间。服务卡在内存上（到了自己的上限，或整个环境的内存用完）时，napbox 结束占内存最多的那个进程，在服务的日志里写明原因，不让它一直卡着。
 
+## 参与贡献
+
+问题和想法欢迎提 [issue](https://github.com/coffeecoproject/napbox/issues)。
+
+贡献代码需要先签贡献者许可协议（CLA）。贡献的版权仍归你；CLA 允许 coffeecoproject 按项目当前的许可证发布你的贡献，以后也可以按别的条款发布，包括商业条款。CLA 还没准备好，所以暂时不接受 pull request，请先提 issue。
+
 ## 许可证
 
-[Apache License 2.0](LICENSE)。npm 包里带了第三方代码，见 [NOTICE](NOTICE)。
+[Functional Source License 1.1, ALv2 Future License](LICENSE)（FSL-1.1-ALv2）。可以为任何目的使用、修改和再分发 napbox，包括在工作中用它开发商业项目；只是不能拿它做成商业产品或服务提供给别人，用来替代 napbox 或提供基本相同的功能。每个版本发布满两年后，也可以按 Apache License 2.0 使用。
+
+0.1.7 及以前的版本按 [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0) 发布，仍然适用 Apache License 2.0。
+
+npm 包里带了第三方代码，见 [NOTICE](NOTICE)。

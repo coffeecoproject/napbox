@@ -45,7 +45,7 @@ function pluginFiles(version: string, launch: Launch): Record<string, string> {
       author: { name: "The napbox Authors", url: REPOSITORY },
       homepage: REPOSITORY,
       repository: REPOSITORY,
-      license: "Apache-2.0",
+      license: "FSL-1.1-ALv2",
       keywords: ["docker-compose", "worktree", "dev-environment", "mcp", "macos"],
     }),
     // alwaysLoad：工具列表每一轮都在，不用先搜索
