@@ -26,7 +26,7 @@ napbox 按项目的 compose 文件，给每个 git worktree 起一套隔离的�
 
 - macOS 26 或更新版本，Apple 芯片
 - Node.js 22.22 或更新版本
-- 用插件需要 Claude Code（`napbox` 命令不依赖它）
+- 用插件需要 Claude Code，用 MCP 工具也可以是 Codex（`napbox` 命令两个都不依赖）
 
 ## 安装
 
@@ -43,7 +43,15 @@ agent 第一次要起服务时，napbox 会报还没准备好，agent 就去调�
 - 没装 Rosetta 时请 macOS 安装（虚拟机里运行 x86 的程序要用）；
 - 把 `napboxd` 放到 `~/Library/Application Support/napbox/`，注册成登录项（`~/Library/LaunchAgents/io.github.coffeecoproject.napbox.plist`）。
 
-不用 Claude Code 的话：`npx napbox setup`。
+在 Codex 里：
+
+```
+npx napbox setup codex
+```
+
+它做同样的 setup，再把 napbox 的 MCP 工具加进 Codex（用的是 `codex mcp add`）。Codex 里只有工具：技能和钩子（会话开始时告诉 agent 端口、拦下 `docker compose up`）是 Claude Code 插件里的。
+
+不用 agent 的话：`npx napbox setup`。
 
 ## 怎么工作
 

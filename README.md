@@ -26,7 +26,7 @@ To see it in a couple of minutes, try the [demo project](examples/demo).
 
 - macOS 26 or later, Apple silicon
 - Node.js 22.22 or later
-- Claude Code, for the plugin (the `napbox` command works without it)
+- Claude Code for the plugin, or Codex for the MCP tools (the `napbox` command works without either)
 
 ## Install
 
@@ -43,7 +43,15 @@ The first time an agent needs services, napbox reports that it is not set up and
 - asks macOS to install Rosetta if it is missing (for x86 programs inside the VM);
 - copies `napboxd` to `~/Library/Application Support/napbox/` and registers it as a login item (`~/Library/LaunchAgents/io.github.coffeecoproject.napbox.plist`).
 
-Without Claude Code: `npx napbox setup`.
+In Codex:
+
+```
+npx napbox setup codex
+```
+
+This runs the same setup and adds napbox's MCP tools to Codex (with `codex mcp add`). Codex gets the tools only: the skill and the hooks (telling the agent its ports when a session starts, stopping `docker compose up`) are part of the Claude Code plugin.
+
+Without an agent: `npx napbox setup`.
 
 ## How it works
 
