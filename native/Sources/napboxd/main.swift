@@ -19,7 +19,8 @@ func fail(_ message: String) -> Never {
 // napboxd prepare：准备内核、runc、Rosetta 和 vminit 后退出，不监听（napbox setup 调用）
 if CommandLine.arguments.dropFirst().first == "prepare" {
     do {
-        try await Prepare.run(supportDirectory: Paths.supportDirectory) { print($0) }
+        // 直接写，不经过 print 的缓冲：setup 要边下边看到进度
+        try await Prepare.run(supportDirectory: Paths.supportDirectory) { FileHandle.standardOutput.write(Data("\($0)\n".utf8)) }
         exit(0)
     } catch {
         fail(error.message)

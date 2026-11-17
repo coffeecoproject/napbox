@@ -1,11 +1,12 @@
 // napbox setup：把后台程序放到固定位置，准备内核和 vminit，注册成登录项并启动。
 // 不放在 npm 或 npx 的目录里运行：那些目录会变、会被清理，登录项要一直找得到程序。
-import { execFile as execFileCallback } from "node:child_process";
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { NapboxClient, NapboxError, supportDirectory } from "../client.ts";
 import type { StatusResult } from "../protocol.ts";
@@ -138,13 +139,22 @@ async function install(source: string, destination: string) {
   }
 }
 
+/** 下载可能要很久（慢的网络要几个小时），进度一行一行实时转出来 */
 async function prepare(daemon: string, log: (line: string) => void) {
-  try {
-    const { stdout } = await execFile(daemon, ["prepare"], { maxBuffer: 1 << 20 });
-    for (const line of stdout.split("\n")) if (line) log(line);
-  } catch (error) {
-    const { stderr, message } = error as { stderr?: string; message: string };
-    throw failed(`准备内核和 vminit 失败：${stderr?.trim() || message}`);
+  const child = spawn(daemon, ["prepare"], { stdio: ["ignore", "pipe", "pipe"] });
+  let stderr = "";
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  lines.on("line", (line) => line && log(line));
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code, signal) => resolve({ code, signal }));
+  }).catch((error: Error) => {
+    throw failed(`准备内核和 vminit 失败：${error.message}`);
+  });
+  if (exit.code !== 0) {
+    const reason = stderr.trim() || (exit.signal ? `napboxd prepare 被信号 ${exit.signal} 停下` : `napboxd prepare 退出码 ${exit.code}`);
+    throw failed(`准备内核和 vminit 失败：${reason}`);
   }
 }
 
