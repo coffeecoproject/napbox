@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const VERSION = "0.1.5";
+const VERSION = "0.1.6";
 
 const installed = path.join(homedir(), "Library/Caches/napbox/versions", VERSION, "node_modules/napbox");
 const manifest = path.join(installed, "package.json");
