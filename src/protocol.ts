@@ -107,7 +107,7 @@ export const EnvironmentInfo = z.object({
   ports: z.array(PortInfo),
   hostPorts: z.array(HostPortInfo),
   egress: EgressMode,
-  /** 给浏览器用的主机名，比如 feat-x.crocwork.localhost：每个环境不同，同一个浏览器里开几个环境 cookie 也不串 */
+  /** 给浏览器用的主机名，比如 feat-x--crocwork.localhost：每个环境不同，同一个浏览器里开几个环境 cookie 也不串 */
   hostname: z.string(),
   variables: z.record(z.string(), z.string()),
   unsetVariables: z.array(z.string()),

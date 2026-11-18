@@ -703,9 +703,9 @@ extension [ComposeIssue] {
             """]
         let p = try load(files, env: ["NAPBOX_API_3100_SITE": "x.localhost:1", "NAPBOX_HOSTNAME": "x.localhost"])
         #expect(p.unsetVariables.isEmpty)
-        let variables = PortVariables.variables([PortAssignment(service: "api", containerPort: 3100, hostPort: 41217)], hostname: "feat-x.p.localhost")
+        let variables = PortVariables.variables([PortAssignment(service: "api", containerPort: 3100, hostPort: 41217)], hostname: "feat-x--p.localhost")
         #expect(try #require(p.service("api")).environment.mapValues { PortReferences.resolve($0, variables) } == [
-            "PUBLIC_ORIGIN": "http://feat-x.p.localhost:41217", "ALLOWED_HOSTS": "feat-x.p.localhost,127.0.0.1",
+            "PUBLIC_ORIGIN": "http://feat-x--p.localhost:41217", "ALLOWED_HOSTS": "feat-x--p.localhost,127.0.0.1",
         ])
     }
 

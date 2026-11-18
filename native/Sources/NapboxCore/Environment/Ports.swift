@@ -42,8 +42,8 @@ public struct PortRequest: Hashable, Sendable {
 
 /// 端口变量：每个登记的端口给两个变量，名字不能撞（compose 检查时用 name 查），status、up 的结果和 ports.json 都按这里拼。
 /// - `NAPBOX_<服务>_<容器端口>` → `127.0.0.1:41217`：程序连它用
-/// - `NAPBOX_<服务>_<容器端口>_SITE` → `feat-x.crocwork.localhost:41217`：给浏览器打开的地址用，cookie 按环境分开（Hostnames）
-/// 另有一个 `NAPBOX_HOSTNAME` → `feat-x.crocwork.localhost`：本机进程的端口拼浏览器地址用
+/// - `NAPBOX_<服务>_<容器端口>_SITE` → `feat-x--crocwork.localhost:41217`：给浏览器打开的地址用，cookie 按环境分开（Hostnames）
+/// 另有一个 `NAPBOX_HOSTNAME` → `feat-x--crocwork.localhost`：本机进程的端口拼浏览器地址用
 public enum PortVariables {
     static let siteSuffix = "_SITE"
     public static let hostname = "NAPBOX_HOSTNAME"
@@ -135,11 +135,17 @@ public final class PortLocks {
     public var lockedPorts: [Int] { sockets.keys.sorted() }
 
     /// 已经锁着也算成功。有一边被别的程序占着返回 false，这次绑上的一边也放开。
-    public func lock(_ port: Int) -> Bool {
+    /// 不是被占的绑定失败（比如 lo0 上没有 ::1，报 EADDRNOTAVAIL）换哪个端口都一样，直接报错说明，不当成被占
+    public func lock(_ port: Int) throws(NapboxError) -> Bool {
         if sockets[port] != nil { return true }
         var fds: [Int32] = []
         for address in Loopback.allCases {
-            guard let fd = Self.acquire(port, address) else {
+            let fd: Int32?
+            do { fd = try Self.acquire(port, address) } catch {
+                for fd in fds { close(fd) }
+                throw error
+            }
+            guard let fd else {
                 for fd in fds { close(fd) }
                 return false
             }
@@ -149,11 +155,26 @@ public final class PortLocks {
         return true
     }
 
-    private static func acquire(_ port: Int, _ address: Loopback) -> Int32? {
+    /// 被别的程序占着是 nil
+    private static func acquire(_ port: Int, _ address: Loopback) throws(NapboxError) -> Int32? {
         let first = listen(port, address, reuseAddress: false)
         if let fd = first.fd { return fd }
-        guard first.error == EADDRINUSE, !someoneListening(port, address) else { return nil }
-        return listen(port, address, reuseAddress: true).fd
+        if first.error == EADDRINUSE {
+            if someoneListening(port, address) { return nil }
+            let again = listen(port, address, reuseAddress: true)
+            if let fd = again.fd { return fd }
+            if again.error == EADDRINUSE { return nil }
+            throw unusable(port, address, again.error)
+        }
+        throw unusable(port, address, first.error)
+    }
+
+    private static func unusable(_ port: Int, _ address: Loopback, _ code: Int32) -> NapboxError {
+        let detail = String(cString: strerror(code))
+        let hint = address == .v6
+            ? "napbox 在 127.0.0.1 和 [::1] 上都要监听（浏览器打开 *.localhost 会连 ::1）；lo0 上没有 ::1 时（ifconfig lo0 可以查）先把它加回来"
+            : "napbox 要在 127.0.0.1 上监听，先查本机回环 lo0 是否正常（ifconfig lo0）"
+        return NapboxError(.portUnavailable, "在 \(address.display) 上监听端口 \(port) 失败（\(detail)），不是端口被占，换端口也一样。\(hint)。")
     }
 
     /// 这个地址上这个端口有没有程序在接受连接。本机回环的连接立刻就有结果，不需要超时。
@@ -202,8 +223,8 @@ public final class PortLocks {
     }
 
     /// 端口现在有没有被别的程序占着：判断和 lock 一样，判断完马上放开，不占着。只用于不锁的端口（本机进程的端口）
-    public func isFree(_ port: Int) -> Bool {
-        guard sockets[port] == nil, lock(port) else { return false }
+    public func isFree(_ port: Int) throws(NapboxError) -> Bool {
+        guard sockets[port] == nil, try lock(port) else { return false }
         release(port)
         return true
     }
@@ -211,6 +232,7 @@ public final class PortLocks {
 
 extension PortLocks.Loopback {
     var family: Int32 { self == .v4 ? AF_INET : AF_INET6 }
+    var display: String { self == .v4 ? "127.0.0.1" : "[::1]" }
 
     /// 127.0.0.1 或 [::1] 的这个端口
     func withSockaddr<T>(_ port: Int, _ body: (UnsafePointer<sockaddr>, socklen_t) -> T) -> T {
@@ -274,7 +296,12 @@ public enum PortAllocator {
 
         for a in current where wanted.contains(a.request) {
             let wasLocked = locks.lockedPorts.contains(a.hostPort)
-            guard locks.lock(a.hostPort) else {
+            let locked: Bool
+            do { locked = try locks.lock(a.hostPort) } catch {
+                rollback()
+                throw error
+            }
+            guard locked else {
                 rollback()
                 throw NapboxError(.portUnavailable, "\(a.service) 的 \(a.containerPort) 端口登记的是宿主机 \(a.hostPort)，现在被别的程序占着。先停掉占用它的程序（lsof -nP -iTCP:\(a.hostPort) -sTCP:LISTEN 可以查），或者 napbox down 之后重新 up 换一个端口。")
             }
@@ -288,9 +315,15 @@ public enum PortAllocator {
         candidates.reverse()
         var lastNew: Int?
         /// 按顺序找下一个没登记、accept 也认可的端口；找不到时放开这次新锁的，报错
-        func next(_ accept: (Int) -> Bool) throws(NapboxError) -> Int {
+        func next(_ accept: (Int) throws(NapboxError) -> Bool) throws(NapboxError) -> Int {
             while let port = candidates.popLast() {
-                if !used.contains(port), accept(port) {
+                if used.contains(port) { continue }
+                let accepted: Bool
+                do { accepted = try accept(port) } catch {
+                    rollback()
+                    throw error
+                }
+                if accepted {
                     used.insert(port)
                     lastNew = port
                     return port

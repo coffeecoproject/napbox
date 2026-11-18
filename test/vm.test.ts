@@ -209,7 +209,7 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     const port = info.ports.find((p) => p.service === "web");
     assert.ok(port);
     assert.equal(info.variables[port.variable], `127.0.0.1:${port.hostPort}`);
-    assert.equal(info.hostname, "goal-1-work.codeos.localhost");
+    assert.equal(info.hostname, "goal-1-work--codeos.localhost");
     assert.equal(info.variables[`${port.variable}_SITE`], `${info.hostname}:${port.hostPort}`);
     assert.equal(info.variables.NAPBOX_HOSTNAME, info.hostname);
     const hear = (host: string) =>

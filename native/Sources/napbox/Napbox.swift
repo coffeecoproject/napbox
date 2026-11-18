@@ -147,7 +147,7 @@ struct TargetOptions: ParsableArguments {
 }
 
 struct Env: ParsableCommand, RawOutput {
-    static let configuration = CommandConfiguration(abstract: "输出当前 worktree 环境的端口变量（export NAPBOX_API_3100=127.0.0.1:41217，给浏览器的 NAPBOX_API_3100_SITE=feat-x.crocwork.localhost:41217，主机名 NAPBOX_HOSTNAME），可以直接 eval \"$(napbox env)\"。不唤醒环境；出错时的 JSON 写到标准错误。")
+    static let configuration = CommandConfiguration(abstract: "输出当前 worktree 环境的端口变量（export NAPBOX_API_3100=127.0.0.1:41217，给浏览器的 NAPBOX_API_3100_SITE=feat-x--crocwork.localhost:41217，主机名 NAPBOX_HOSTNAME），可以直接 eval \"$(napbox env)\"。不唤醒环境；出错时的 JSON 写到标准错误。")
 
     @OptionGroup var options: TargetOptions
 

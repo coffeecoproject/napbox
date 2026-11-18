@@ -1,5 +1,5 @@
 // compose 里引用这个环境自己的端口变量：`${NAPBOX_API_3100}`，起服务时换成宿主机上连它的地址（127.0.0.1:41217）；
-// `${NAPBOX_API_3100_SITE}` 换成给浏览器用的地址（feat-x.crocwork.localhost:41217），`${NAPBOX_HOSTNAME}` 换成主机名。
+// `${NAPBOX_API_3100_SITE}` 换成给浏览器用的地址（feat-x--crocwork.localhost:41217），`${NAPBOX_HOSTNAME}` 换成主机名。
 // 给需要知道自己对外地址的服务用，比如服务端生成给浏览器打开的链接、允许的来源。
 // 读 compose 时还没分配端口，先换成占位，起服务时再换成地址；端口对同一个环境固定不变，所以定义不跟着端口变。
 // 只能用在 environment 和 env_file 里，引用的要是启用的服务在 ports 里写的端口。

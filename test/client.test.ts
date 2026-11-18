@@ -411,7 +411,7 @@ describe("假服务端：真实 napboxd 发不出来的回应", () => {
     const base = { name: "codeos/x", owner: "codeos", directory: "/r", confine: true };
     const environment = {
       name: "codeos/x", owner: "codeos", state: "running", worktree: "/r", ports: [], hostPorts: [], egress: "open",
-      hostname: "x.codeos.localhost", variables: {}, unsetVariables: [], serviceExits: [],
+      hostname: "x--codeos.localhost", variables: {}, unsetVariables: [], serviceExits: [],
     };
     /** 按版本回 status，再按 confined 回 create；返回收到的方法 */
     async function attempt(version: string, confined: boolean | undefined, expect: string | undefined): Promise<string[]> {

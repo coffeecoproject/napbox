@@ -75,7 +75,7 @@ import NapboxProtocol
 
 @Suite struct NamingTests {
     func record(_ name: String, project: String, repo: String, worktree: String) -> EnvironmentRecord {
-        EnvironmentRecord(name: name, project: project, mainRepository: repo, worktree: worktree, owner: .worktree)
+        EnvironmentRecord(name: name, project: project, mainRepository: repo, worktree: worktree, owner: .worktree, hostname: "x.localhost")
     }
 
     @Test func reuseAndCollisions() {
@@ -104,7 +104,7 @@ import NapboxProtocol
         #expect(state.environmentName(for: loc("/a/Pawcode", "/a/Pawcode/wt/x"), temporary: "db-test") == "pawcode/x/db-test")
 
         // 只起过临时环境的 worktree：开发环境的名字从临时环境的名字里取，不重新算
-        var temp = EnvironmentRecord(name: "pawcode/x-2/t1", project: "pawcode", mainRepository: "/a/Pawcode", worktree: "/elsewhere/x", owner: .worktree)
+        var temp = EnvironmentRecord(name: "pawcode/x-2/t1", project: "pawcode", mainRepository: "/a/Pawcode", worktree: "/elsewhere/x", owner: .worktree, hostname: "x.localhost")
         temp.temporary = "t1"
         state.environments.append(temp)
         #expect(state.environmentName(for: loc("/a/Pawcode", "/elsewhere/x")) == "pawcode/x-2")
@@ -167,43 +167,73 @@ import NapboxProtocol
         #expect((reset?["pending"] as? [String: [String: [String]]]) == ["replaceVolumes": ["volumes": ["db"]]])
     }
 
-    /// 主机名：环境名各段倒过来，每段转成一个标签；转写后撞名的加 -2，整段中文的用哈希
+    /// 主机名：localhost 下面只有一级。环境名各段倒过来用 -- 接成一个标签，临时环境接在所属开发环境实际分到的主机名前面；
+    /// 转写后撞名的加 -2，整段中文的用哈希
     @Test func hostnames() {
         var state = NapboxState()
-        func add(_ name: String) -> String {
+        func add(_ name: String, temporary: String? = nil) -> String {
             var r = record(name, project: "p", repo: "/p", worktree: "/\(name)")
-            r.hostname = state.newHostname(for: name)
+            r.temporary = temporary
+            r.hostname = state.newHostname(for: name, temporary: temporary)
             state.environments.append(r)
-            return r.siteHostname
+            return r.hostname
         }
-        #expect(add("crocwork/main") == "main.crocwork.localhost")
-        #expect(add("crocwork/feat_x") == "feat-x.crocwork.localhost")
-        #expect(add("crocwork/feat-x") == "feat-x-2.crocwork.localhost") // 和 feat_x 转写后撞了
-        #expect(add("crocwork/feat_x/e2e-1") == "e2e-1.feat-x.crocwork.localhost")
-        #expect(add("codeos/goal-12.v2") == "goal-12-v2.codeos.localhost")
-        #expect(add("my app/--x__y--") == "x-y.my-app.localhost")
+        #expect(add("crocwork/main") == "main--crocwork.localhost")
+        #expect(add("crocwork/feat_x") == "feat-x--crocwork.localhost")
+        #expect(add("crocwork/feat-x") == "feat-x--crocwork-2.localhost") // 和 feat_x 转写后撞了
+        // 临时环境跟着所属开发环境分到的主机名走，不按环境名重算：撞名改过的 feat-x 的临时环境落在 feat-x--crocwork-2 上
+        #expect(add("crocwork/feat-x/e2e-1", temporary: "e2e-1") == "e2e-1--feat-x--crocwork-2.localhost")
+        #expect(add("crocwork/feat_x/e2e-1", temporary: "e2e-1") == "e2e-1--feat-x--crocwork.localhost")
+        // 开发环境还没登记的临时环境：按开发环境的名字现算
+        #expect(add("crocwork/solo/t", temporary: "t") == "t--solo--crocwork.localhost")
+        #expect(add("codeos/goal-12.v2") == "goal-12-v2--codeos.localhost")
+        #expect(add("my app/--x__y--") == "x-y--my-app.localhost")
         let chinese = add("搭档/main")
-        #expect(chinese.hasSuffix(".localhost") && chinese.hasPrefix("main.x"))
+        #expect(chinese.hasPrefix("main--x") && chinese.hasSuffix(".localhost"))
         #expect(add("拾页/main") != chinese) // 哈希按原来的名字算
-        #expect(add("搭档-2/main") == "main.2.localhost") // 还剩下字母数字的不用哈希
+        #expect(add("搭档-2/main") == "main--2.localhost") // 还剩下字母数字的不用哈希
+        // xn-- 开头的浏览器当国际化域名解码，前面加 x
+        #expect(add("p/xn") == "xxn--p.localhost")
         // 标签最长 63 个字符：截断后去掉末尾的 -，撞名时给 -2 让出位置
         let long = String(repeating: "a", count: 62) + "_b"
-        #expect(add("p/\(long)") == String(repeating: "a", count: 62) + ".p.localhost")
-        #expect(add("p/\(long)x") == String(repeating: "a", count: 61) + "-2.p.localhost")
+        #expect(add("p/\(long)") == String(repeating: "a", count: 62) + ".localhost")
+        #expect(add("q/\(long)") == String(repeating: "a", count: 61) + "-2.localhost")
+
+        // 都只有一级，互不相同，没有哪个是另一个的子域（cookie 设了 Domain 也带不过去）
+        let all = state.environments.map(\.hostname)
+        #expect(Set(all).count == all.count)
+        for h in all {
+            #expect(h.hasSuffix(".localhost") && !h.dropLast(".localhost".count).contains("."), "\(h)")
+            #expect(h.utf8.count - ".localhost".utf8.count <= 63, "\(h)")
+            for other in all where other != h { #expect(!h.hasSuffix("." + other), "\(h) 是 \(other) 的子域") }
+        }
     }
 
-    /// 加主机名之前的状态文件：读入时给每个环境补上，马上写回；之后读到的都一样
-    @Test func storeFillsMissingHostnames() throws {
+    /// 第 1 版状态文件（登记里没有主机名）：读入时迁到第 2 版、马上写回。转写后撞名的开发环境依次加 -2，
+    /// 临时环境排在前面也是先分开发环境，再接在各自开发环境分到的主机名前面
+    @Test func storeMigratesVersion1() throws {
         try withProject(["x": ""]) { dir in
             let url = dir.appending(path: "state.json")
             var old = NapboxState()
-            old.environments = [record("p/main", project: "p", repo: "/p", worktree: "/p"), record("p/x", project: "p", repo: "/p", worktree: "/p/x")]
-            try DiskJSON.encoder.encode(old).write(to: url)
-            #expect(!(try String(contentsOf: url, encoding: .utf8)).contains("hostname"))
+            var tempOfUnderscore = record("p/feat_x/e2e", project: "p", repo: "/p", worktree: "/p/a")
+            tempOfUnderscore.temporary = "e2e"
+            var tempOfDash = record("p/feat-x/e2e", project: "p", repo: "/p", worktree: "/p/b")
+            tempOfDash.temporary = "e2e"
+            old.environments = [tempOfDash, tempOfUnderscore, record("p/feat_x", project: "p", repo: "/p", worktree: "/p/a"),
+                                record("p/feat-x", project: "p", repo: "/p", worktree: "/p/b")]
+            var root = try #require(try JSONSerialization.jsonObject(with: try DiskJSON.encoder.encode(old)) as? [String: Any])
+            root["version"] = 1
+            root["environments"] = (root["environments"] as? [[String: Any]])?.map { $0.filter { $0.key != "hostname" } }
+            try JSONSerialization.data(withJSONObject: root).write(to: url)
+
             let store = try StateStore(url: url)
-            #expect(store.state.environments.map(\.hostname) == ["main.p.localhost", "x.p.localhost"])
+            #expect(store.state.version == 2)
+            #expect(store.state.environments.map(\.hostname) == [
+                "e2e--feat-x--p-2.localhost", "e2e--feat-x--p.localhost", "feat-x--p.localhost", "feat-x--p-2.localhost",
+            ])
             #expect(try StateStore(url: url).state == store.state)
-            #expect((try String(contentsOf: url, encoding: .utf8)).contains("main.p.localhost"))
+            let written = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            #expect(written["version"] as? Int == 2)
         }
     }
 
@@ -213,10 +243,9 @@ import NapboxProtocol
             let store = try StateStore(url: url)
             #expect(store.state.environments.isEmpty)
             try store.update { s throws(NapboxError) in
-                var r = EnvironmentRecord(name: "p/main", project: "p", mainRepository: "/p", worktree: "/p", owner: .worktree,
-                                          ports: [PortAssignment(service: "db", containerPort: 5432, hostPort: 40000)])
-                r.hostname = s.newHostname(for: r.name)
-                s.environments.append(r)
+                s.environments.append(EnvironmentRecord(name: "p/main", project: "p", mainRepository: "/p", worktree: "/p", owner: .worktree,
+                                                        hostname: s.newHostname(for: "p/main", temporary: nil),
+                                                        ports: [PortAssignment(service: "db", containerPort: 5432, hostPort: 40000)]))
             }
             #expect(try StateStore(url: url).state == store.state)
             var info = stat()
@@ -236,10 +265,10 @@ import NapboxProtocol
             #expect { try StateStore(url: url) } throws: { ($0 as? NapboxError)?.code == "state_corrupted" }
 
             // 格式版本对不上：说清楚是版本的问题，不当成别的错
-            try #"{"version": 2, "environments": []}"#.write(to: url, atomically: true, encoding: .utf8)
+            try #"{"version": 3, "environments": []}"#.write(to: url, atomically: true, encoding: .utf8)
             #expect { try StateStore(url: url) } throws: { error in
                 guard let e = error as? NapboxError else { return false }
-                return e.code == "state_corrupted" && e.message.contains("第 2 版") && e.message.contains("只认第 1 版")
+                return e.code == "state_corrupted" && e.message.contains("第 3 版") && e.message.contains("只认第 1 到第 2 版")
             }
         }
     }
@@ -303,7 +332,7 @@ import NapboxProtocol
 
     @Test func allocate() throws {
         var state = NapboxState()
-        state.environments = [EnvironmentRecord(name: "a/main", project: nil, mainRepository: nil, worktree: "/a", owner: .worktree, ip: "192.168.64.128")]
+        state.environments = [EnvironmentRecord(name: "a/main", project: nil, mainRepository: nil, worktree: "/a", owner: .worktree, hostname: "x.localhost", ip: "192.168.64.128")]
         // 已有的沿用
         #expect(try AddressAllocator.allocate(environment: "a/main", state: state, inUseOnNetwork: ["192.168.64.128"]) == "192.168.64.128")
         // 跳过登记的和 ARP 表里有的
@@ -349,7 +378,7 @@ import NapboxProtocol
     func state(_ envs: [String: [PortAssignment]]) -> NapboxState {
         var s = NapboxState()
         s.environments = envs.sorted { $0.key < $1.key }.map {
-            EnvironmentRecord(name: $0.key, project: nil, mainRepository: nil, worktree: "/\($0.key)", owner: .worktree, ports: $0.value)
+            EnvironmentRecord(name: $0.key, project: nil, mainRepository: nil, worktree: "/\($0.key)", owner: .worktree, hostname: "x.localhost", ports: $0.value)
         }
         return s
     }
@@ -376,10 +405,10 @@ import NapboxProtocol
         #expect(!boundElsewhere)
 
         // 写回登记表后，第三个环境不会拿到这两个端口
-        registry.environments.append(EnvironmentRecord(name: "p/main", project: nil, mainRepository: nil, worktree: "/p", owner: .worktree, ports: first))
+        registry.environments.append(EnvironmentRecord(name: "p/main", project: nil, mainRepository: nil, worktree: "/p", owner: .worktree, hostname: "x.localhost", ports: first))
         let third = try PortAllocator.assign(requests([("db", 5432)]), hostPorts: [], environment: "q/main", state: registry, locks: locks, range: range).ports
         #expect(third == [PortAssignment(service: "db", containerPort: 5432, hostPort: range.lowerBound + 4)])
-        registry.environments.append(EnvironmentRecord(name: "q/main", project: nil, mainRepository: nil, worktree: "/q", owner: .worktree, ports: third))
+        registry.environments.append(EnvironmentRecord(name: "q/main", project: nil, mainRepository: nil, worktree: "/q", owner: .worktree, hostname: "x.localhost", ports: third))
 
         // 再次 up：端口不变；去掉 api、加上 cache：api 的端口释放，cache 拿新端口
         let second = try PortAllocator.assign(requests([("db", 5432), ("cache", 6379)]), hostPorts: [], environment: "p/main", state: registry, locks: locks, range: range).ports
@@ -401,7 +430,7 @@ import NapboxProtocol
         func up(_ profiles: [String]) throws -> EnvironmentRecord {
             let project = try load(files, profiles: profiles)
             let ports = try PortAllocator.assign(project.portRequests, hostPorts: [], environment: "p/main", state: registry, locks: locks, range: range).ports
-            let record = EnvironmentRecord(name: "p/main", project: nil, mainRepository: nil, worktree: "/p", owner: .worktree,
+            let record = EnvironmentRecord(name: "p/main", project: nil, mainRepository: nil, worktree: "/p", owner: .worktree, hostname: "x.localhost",
                                            ports: ports, definition: project)
             registry.environments = [record]
             return record
@@ -427,7 +456,7 @@ import NapboxProtocol
         func up(_ name: String) throws -> PortAllocation {
             let allocation = try PortAllocator.assign(requests([("api", 3100)]), hostPorts: [], environment: name, state: registry, locks: locks, range: range)
             registry.environments.removeAll { $0.name == name }
-            registry.environments.append(EnvironmentRecord(name: name, project: nil, mainRepository: nil, worktree: "/\(name)", owner: .worktree, ports: allocation.ports))
+            registry.environments.append(EnvironmentRecord(name: name, project: nil, mainRepository: nil, worktree: "/\(name)", owner: .worktree, hostname: "x.localhost", ports: allocation.ports))
             registry.recordAllocation(allocation)
             return allocation
         }
@@ -456,7 +485,7 @@ import NapboxProtocol
         func up(_ name: String, _ services: [(String, Int)], _ hostPorts: [String]) throws -> PortAllocation {
             let allocation = try PortAllocator.assign(requests(services), hostPorts: hostPorts, environment: name, state: registry, locks: locks, range: range)
             registry.environments.removeAll { $0.name == name }
-            var record = EnvironmentRecord(name: name, project: nil, mainRepository: nil, worktree: "/\(name)", owner: .worktree, ports: allocation.ports)
+            var record = EnvironmentRecord(name: name, project: nil, mainRepository: nil, worktree: "/\(name)", owner: .worktree, hostname: "x.localhost", ports: allocation.ports)
             record.hostPorts = allocation.hostPorts
             registry.environments.append(record)
             registry.recordAllocation(allocation)
@@ -502,10 +531,10 @@ import NapboxProtocol
 
     @Test func hostPortVariables() {
         #expect(HostPortVariables.name(of: HostPortAssignment(name: "e2e_web", hostPort: 41230)) == "NAPBOX_HOST_E2E_WEB")
-        #expect(PortVariables.all([PortAssignment(service: "host", containerPort: 5432, hostPort: 41229)], hostname: "main.p.localhost",
+        #expect(PortVariables.all([PortAssignment(service: "host", containerPort: 5432, hostPort: 41229)], hostname: "main--p.localhost",
                                   hostPorts: [HostPortAssignment(name: "server", hostPort: 41230)])
-            == ["NAPBOX_HOST_5432": "127.0.0.1:41229", "NAPBOX_HOST_5432_SITE": "main.p.localhost:41229",
-                "NAPBOX_HOSTNAME": "main.p.localhost", "NAPBOX_HOST_SERVER": "41230"])
+            == ["NAPBOX_HOST_5432": "127.0.0.1:41229", "NAPBOX_HOST_5432_SITE": "main--p.localhost:41229",
+                "NAPBOX_HOSTNAME": "main--p.localhost", "NAPBOX_HOST_SERVER": "41230"])
         for good in ["server", "e2e_web", "worker2", "a", "web_site", "a_1x_site"] { #expect(HostPortVariables.isValidName(good), "\(good)") }
         for bad in ["Server", "e2e_1", "1abc", "_x", "web_", "web-api", "", "x_80_site"] { #expect(!HostPortVariables.isValidName(bad), "\(bad)") }
         // 服务叫 host 时它的端口变量（两种）不算本机进程的；服务叫 host_x 时它的浏览器地址变量也不算
@@ -520,7 +549,7 @@ import NapboxProtocol
 
     /// 别的程序只在 [::1] 上监听：127.0.0.1 绑得上也不算空闲（主机名会先解析到 ::1），这次绑上的 127.0.0.1 也放开
     @Test func portBusyOnIPv6Only() throws {
-        let port = range.lowerBound + 9
+        let port = 38481 // 单独一个：range 的最后一个端口别的用例也用，刚关掉时再绑会偶尔失败
         let fd = socket(AF_INET6, SOCK_STREAM, 0)
         defer { close(fd) }
         var one: Int32 = 1
@@ -534,22 +563,28 @@ import NapboxProtocol
         #expect(bound == 0)
         listen(fd, 128)
         let locks = PortLocks()
-        #expect(!locks.lock(port))
+        #expect(try !locks.lock(port))
         #expect(locks.lockedPorts.isEmpty)
-        // 127.0.0.1 没被留着：别的程序照样绑得上
-        let v4 = occupy(port)
-        defer { close(v4) }
-        var got = sockaddr_in()
-        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
-        #expect(withUnsafeMutablePointer(to: &got) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(v4, $0, &len) } } == 0)
-        #expect(UInt16(bigEndian: got.sin_port) == UInt16(port))
+        // 127.0.0.1 没被留着：别的程序照样绑得上。lock 刚关掉它，整组跑时可能还留在别的用例正起的子进程里一小会儿
+        // （见 range 的说明），所以多试几次，最多等 0.1 秒
+        var rebound = false
+        for _ in 0..<50 where !rebound {
+            let v4 = occupy(port)
+            var got = sockaddr_in()
+            var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+            let named = withUnsafeMutablePointer(to: &got) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(v4, $0, &len) } }
+            rebound = named == 0 && UInt16(bigEndian: got.sin_port) == UInt16(port)
+            close(v4)
+            if !rebound { usleep(2000) }
+        }
+        #expect(rebound)
     }
 
     /// 锁上的端口 127.0.0.1 和 [::1] 两边都占着，各给一份副本
     @Test func lockHoldsBothLoopbacks() throws {
         let port = 38480
         let locks = PortLocks()
-        #expect(locks.lock(port))
+        #expect(try locks.lock(port))
         defer { locks.release(port) }
         for address in PortLocks.Loopback.allCases { #expect(PortLocks.someoneListening(port, address), "\(address)") }
         let copies = try #require(locks.duplicate(port))
@@ -580,7 +615,7 @@ import NapboxProtocol
     @Test func relockAfterTimeWait() throws {
         let port = range.lowerBound + 8
         let locks = PortLocks()
-        #expect(locks.lock(port))
+        #expect(try locks.lock(port))
         let copies = try #require(locks.duplicate(port))
         let listener = copies[0] // 127.0.0.1 的那份
         let client = socket(AF_INET, SOCK_STREAM, 0)
@@ -598,7 +633,7 @@ import NapboxProtocol
         for fd in copies { close(fd) }
         locks.release(port)
         usleep(100_000)
-        #expect(locks.lock(port))
+        #expect(try locks.lock(port))
     }
 
     @Test func exhausted() throws {
@@ -779,7 +814,7 @@ import NapboxProtocol
     /// 调用方的环境不占 worktree 的名字规则：worktree 环境算名字时要避开调用方已经用了的名字
     @Test func worktreeNameAvoidsCallerName() {
         var state = NapboxState()
-        state.environments = [EnvironmentRecord(name: "repo/main", project: nil, mainRepository: nil, worktree: "/copy/repo", owner: .caller(id: "codeos"))]
+        state.environments = [EnvironmentRecord(name: "repo/main", project: nil, mainRepository: nil, worktree: "/copy/repo", owner: .caller(id: "codeos"), hostname: "x.localhost")]
         let location = WorktreeLocation(mainRepository: URL(fileURLWithPath: "/w/repo"), worktree: URL(fileURLWithPath: "/w/repo"))
         #expect(state.environmentName(for: location) == "repo/main-2")
     }

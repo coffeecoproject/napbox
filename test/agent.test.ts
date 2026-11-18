@@ -257,11 +257,11 @@ test("会话开始的说明：服务的端口、本机程序用的端口和浏�
     ports: [{ service: "db", containerPort: 5432, hostPort: 41001, variable: "NAPBOX_DB_5432" }],
     hostPorts: [{ name: "server", hostPort: 41002, variable: "NAPBOX_HOST_SERVER" }],
     egress: "open",
-    hostname: "main.demo.localhost",
+    hostname: "main--demo.localhost",
     variables: {
       NAPBOX_DB_5432: "127.0.0.1:41001",
-      NAPBOX_DB_5432_SITE: "main.demo.localhost:41001",
-      NAPBOX_HOSTNAME: "main.demo.localhost",
+      NAPBOX_DB_5432_SITE: "main--demo.localhost:41001",
+      NAPBOX_HOSTNAME: "main--demo.localhost",
       NAPBOX_HOST_SERVER: "41002",
     },
     unsetVariables: [],
@@ -269,7 +269,7 @@ test("会话开始的说明：服务的端口、本机程序用的端口和浏�
   });
   assert.ok(note.includes("db:5432 → 127.0.0.1:41001（变量 NAPBOX_DB_5432）"));
   assert.ok(note.includes("server → 端口 41002（变量 NAPBOX_HOST_SERVER"));
-  assert.ok(note.includes("页面地址用这个环境的主机名 main.demo.localhost"));
+  assert.ok(note.includes("页面地址用这个环境的主机名 main--demo.localhost"));
 });
 
 test("命令入口：别的命令交给原生命令行，退出码和输出都是它的", () => {

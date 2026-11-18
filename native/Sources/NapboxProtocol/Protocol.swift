@@ -182,11 +182,11 @@ public struct EnvironmentInfo: Codable, Sendable {
     /// 本机进程的端口（compose 的 x-napbox.host_ports），napboxd 不占着，给项目自己的进程监听
     public var hostPorts: [HostPortInfo]
     public var egress: EgressMode
-    /// 给浏览器用的主机名，比如 `feat-x.crocwork.localhost`：每个环境不同，同一个浏览器里开几个环境 cookie 也不串。
+    /// 给浏览器用的主机名，比如 `feat-x--crocwork.localhost`：每个环境不同，同一个浏览器里开几个环境 cookie 也不串。
     /// 解析到本机，登记时分配，down 之前不变
     public var hostname: String
     /// 可以直接 export 的变量：`NAPBOX_API_3100` → `127.0.0.1:41217`（程序连它用），
-    /// `NAPBOX_API_3100_SITE` → `feat-x.crocwork.localhost:41217`（给浏览器打开的地址用），`NAPBOX_HOSTNAME` → 主机名；
+    /// `NAPBOX_API_3100_SITE` → `feat-x--crocwork.localhost:41217`（给浏览器打开的地址用），`NAPBOX_HOSTNAME` → 主机名；
     /// 本机进程的端口是 `NAPBOX_HOST_SERVER` → `41230`
     public var variables: [String: String]
     /// compose 里用到了但没设置、也没默认值的变量（按空字符串处理）

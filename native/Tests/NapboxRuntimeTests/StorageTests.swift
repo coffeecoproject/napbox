@@ -12,7 +12,7 @@ struct StorageTests {
         let root = FileManager.default.temporaryDirectory.appending(path: "nbx-storage-\(UUID().uuidString)")
         let storage = Storage(root: root)
         let record = EnvironmentRecord(name: "codeos/goal-1-work", project: nil, mainRepository: nil,
-                                       worktree: "/tmp/goal-1/repo", owner: .caller(id: "codeos"))
+                                       worktree: "/tmp/goal-1/repo", owner: .caller(id: "codeos"), hostname: "x.localhost")
         let file = storage.environmentDirectory(record).appending(path: "volumes/data/who")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("kept".utf8).write(to: file)
@@ -77,7 +77,7 @@ struct StorageTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let storage = Storage(root: root)
         let record = EnvironmentRecord(name: "codeos/never-started", project: nil, mainRepository: nil,
-                                       worktree: "/tmp/never/repo", owner: .caller(id: "codeos"))
+                                       worktree: "/tmp/never/repo", owner: .caller(id: "codeos"), hostname: "x.localhost")
         #expect(try storage.discardEnvironment(record, reason: "codeos 销毁") == nil)
         #expect(recycledEntries(storage).isEmpty)
     }
@@ -154,8 +154,8 @@ struct SnapshotTests {
     private func setUp() throws -> (Storage, main: EnvironmentRecord, branch: EnvironmentRecord) {
         let root = fm.temporaryDirectory.appending(path: "nbx-snapshot-\(UUID().uuidString)")
         let storage = Storage(root: root)
-        let main = EnvironmentRecord(name: "p/main", project: "p", mainRepository: "/r/p", worktree: "/r/p", owner: .worktree)
-        let branch = EnvironmentRecord(name: "p/b", project: "p", mainRepository: "/r/p", worktree: "/r/p/.wt/b", owner: .worktree)
+        let main = EnvironmentRecord(name: "p/main", project: "p", mainRepository: "/r/p", worktree: "/r/p", owner: .worktree, hostname: "x.localhost")
+        let branch = EnvironmentRecord(name: "p/b", project: "p", mainRepository: "/r/p", worktree: "/r/p/.wt/b", owner: .worktree, hostname: "x.localhost")
         return (storage, main, branch)
     }
 
@@ -270,7 +270,7 @@ struct SnapshotTests {
         let unfinished = storage.environmentDirectory(main).appending(path: "snapshots/unfinished")
         try fm.createDirectory(at: unfinished, withIntermediateDirectories: true)
         _ = try storage.stageSeed(from: main, to: branch.id, volumes: ["pg"])
-        let other = EnvironmentRecord(name: "p/c", project: "p", mainRepository: "/r/p", worktree: "/r/p/.wt/c", owner: .worktree)
+        let other = EnvironmentRecord(name: "p/c", project: "p", mainRepository: "/r/p", worktree: "/r/p/.wt/c", owner: .worktree, hostname: "x.localhost")
         _ = try storage.stageSeed(from: main, to: other.id, volumes: ["pg"])
         _ = storage.removeLeftoverSeeds(keepingIncoming: [branch.id])
         #expect(!fm.fileExists(atPath: unfinished.path))
