@@ -1,5 +1,6 @@
 // 镜像构建（compose 的 build）：真的起构建虚拟机、从 Docker Hub 拉基础镜像。从 scripts/test-client.sh build 运行。
-// 镜像库也用临时的（不链接正在用的）：构建会往里写镜像、清理没人用的内容，正在用的镜像库不该被碰。内核只读着用。
+// 镜像库用正在用的那份的 APFS 克隆（不链接）：构建会往里写镜像、清理没人用的内容，正在用的镜像库不该被碰；
+// 克隆不占空间、马上就好，构建虚拟机的镜像、vminit 这些也不用每次从网上重新拉。内核只读着用。
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
@@ -25,6 +26,8 @@ if (!real) throw new Error("要用 scripts/test-client.sh build 运行");
 const work = realpathSync(mkdtempSync(path.join(tmpdir(), "nbx-build-")));
 const support = path.join(work, "support");
 mkdirSync(support);
+// cp -c：APFS 克隆，两边各改各的
+execFileSync("cp", ["-c", "-R", path.join(real, "images"), path.join(support, "images")]);
 symlinkSync(path.join(real, "kernel"), path.join(support, "kernel"));
 symlinkSync(path.join(real, "runc"), path.join(support, "runc"));
 startBuilderAtRandomAddress(support);
