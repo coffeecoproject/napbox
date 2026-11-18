@@ -58,6 +58,7 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 - **用完整的 Chromium**：`use` 里同时写 `channel: 'chromium'`，浏览器服务按它启动镜像里装着的完整 Chromium。不写时用的是 Playwright 默认的精简版无界面浏览器（`chrome-headless-shell`），和用户的浏览器有差别。napbox 的环境是 Linux ARM，没有 Chrome 和 Edge，`channel: 'chrome'` 用不了，Chromium 和 Chrome 同一个内核。项目里有几份 Playwright 配置连同一个浏览器服务时（比如页面测试和录数据），连法和 `channel` 放在一个共用的模块里，各份配置引用它。
 - **页面地址用 napbox 分给本机的地址**（`127.0.0.1:<端口>`，和测试在本机调接口用的同一个）：`exposeNetwork` 让浏览器打开的 `127.0.0.1` 经测试的连接回到本机，环境断网（`egress none`）时也通。这样本机 `request` 登录拿到的 cookie 交给浏览器照样能用，页面也算安全来源，`crypto.randomUUID`、剪贴板、通知这些只在安全来源能用的接口照常可用。不要写服务名（`http://gateway`）：它不算安全来源，cookie 的域名也和本机调接口的对不上。
 - **版本要一致**：镜像 tag 和项目装的 Playwright 同一版本，镜像里的浏览器是按版本配的，不一致时报找不到浏览器；测试运行器和浏览器服务的 Playwright 版本不同时，一连就报 `Playwright version mismatch`。升级 Playwright 时一起改镜像 tag。
+- **登录状态按 worker 各存一份**：在全局准备阶段登录一次、把登录状态（`storageState`）存成一个文件给所有 worker 用的，cookie 记在第一个 worker 的地址名下，会被带到别的 worker 的地址上，各套环境的数据库不同，结果是莫名其妙的 401，JWT 密钥相同时还可能以别的环境的身份通过。每个 worker 在自己那套环境里登录，存到按 worker 编号命名的文件。
 - **上传、下载、截图、trace 照常用**：`setInputFiles` 传本机的文件，下载 `saveAs`、截图、trace 都写在本机的输出目录。没有有头的窗口，失败了看 trace（`npx playwright show-trace`），不要为了看窗口改回本机浏览器。
 - **截图对比的基准图用环境里这个浏览器拍**（Linux、arm64），镜像或 Playwright 版本变了要重拍。
 - **要确认页面不依赖外网**：起好临时环境后调 `egress`，传 `none` 和同一个 `temp`（脚本里是 `npx napbox egress none --temp <名字>`），外网请求直接失败，环境里的服务照常能访问。
@@ -65,8 +66,9 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 ## 常见情况
 
 - **前端、小程序、App 要连环境里的后端**：它们跑在本机，不在环境里，后端地址要由项目的启动脚本交给它们。脚本从 `npx napbox up` 返回的 JSON（或 `npx napbox env`）里取出后端的地址：网页前端（vite 这类）用环境变量传进去；读不到环境变量的（微信小程序、手机 App）由脚本生成一份本地配置文件，加进 `.gitignore`，不提交。缺这份文件时明确报错、提示先运行启动脚本，不要悄悄回退到原来的地址。这份文件是端口的副本：项目回收环境的命令要一起删掉它，项目说明里写明起停环境用项目的脚本（直接调 napbox 的 `up`、`down` 不会更新它）。单元测试自己给一个固定地址，不依赖这份文件。不要为了凑回原来的端口去改 compose。
-- **环境里的服务要知道自己在宿主机上的地址**（比如服务端生成给浏览器、小程序打开的图片链接）：在 compose 的 `environment` 或 `env_file` 里写 `PUBLIC_ORIGIN: http://${NAPBOX_API_3100}`，起服务时换成这个环境分到的地址。只能用在这两处，引用的要是这个 compose 里启用的服务在 `ports` 里写的端口；不要让启动脚本先 up 一次取端口再 up 一次。
-- **项目自己在本机跑的程序要监听端口**（开发时在本机跑的后台和网页，不在 compose 里；页面测试的不算，见上面「网页页面测试」）：不要写死端口，也不要自己按目录算一组。在 compose 顶层写 `x-napbox: {host_ports: [server, web]}`，`up` 返回的变量里（或 `npx napbox env`）有 `NAPBOX_HOST_SERVER`，值是端口号，启动脚本把它交给程序（比如写进 `.env`）。每个 worktree 一组，固定到 `down`。napbox 不占着这些端口，程序自己监听；启动时报端口被占，是别的程序抢先占了，停掉它或者 `down` 后重新 `up` 换一组。名字用小写字母、数字和下划线，不能以 `_数字` 结尾（要编号写成 `worker2`）。compose 里不能引用 `${NAPBOX_HOST_…}`：环境里访问不到本机。
+- **浏览器打开的页面地址用主机名**：每个环境有自己的主机名（`feat-x.crocwork.localhost`，解析到本机，不用配置），每个端口有一个 `NAPBOX_<服务>_<端口>_SITE`（主机名加端口），主机名本身是 `NAPBOX_HOSTNAME`。浏览器按主机名存 cookie、不看端口，都用 `127.0.0.1` 时同一个浏览器里开几个 worktree 会互相覆盖登录。启动脚本给人打开的页面地址、服务端生成给浏览器的链接、允许的来源都用 `_SITE`；本机程序的端口拼成 `http://${NAPBOX_HOSTNAME}:${NAPBOX_HOST_WEB}`。后端校验 `Host` 或来源的（允许的来源、`ALLOWED_HOSTS` 这类）要放行这个主机名。程序连服务（数据库、本机脚本调接口）还是用 `127.0.0.1` 的那个变量。小程序、手机 App 这类不在本机浏览器里打开的不一定认 `*.localhost`，照旧用原来的地址。
+- **环境里的服务要知道自己在宿主机上的地址**（比如服务端生成给浏览器打开的链接、允许的来源）：在 compose 的 `environment` 或 `env_file` 里写 `PUBLIC_ORIGIN: http://${NAPBOX_API_3100_SITE}`（给浏览器的）或 `http://${NAPBOX_API_3100}`（`127.0.0.1` 的），起服务时换成这个环境分到的地址。只能用在这两处，引用的要是这个 compose 里启用的服务在 `ports` 里写的端口（`NAPBOX_HOSTNAME` 也行）；不要让启动脚本先 up 一次取端口再 up 一次。
+- **项目自己在本机跑的程序要监听端口**（开发时在本机跑的后台和网页，不在 compose 里；页面测试的不算，见上面「网页页面测试」）：不要写死端口，也不要自己按目录算一组。在 compose 顶层写 `x-napbox: {host_ports: [server, web]}`，`up` 返回的变量里（或 `npx napbox env`）有 `NAPBOX_HOST_SERVER`，值是端口号，启动脚本把它交给程序（比如写进 `.env`）。每个 worktree 一组，固定到 `down`。napbox 不占着这些端口，程序自己监听；启动时报端口被占，是别的程序抢先占了，停掉它或者 `down` 后重新 `up` 换一组。名字用小写字母、数字和下划线，不能以 `_数字` 或 `_数字_site` 结尾（要编号写成 `worker2`）。compose 里不能引用 `${NAPBOX_HOST_…}`：环境里访问不到本机。
 - **compose 文件不在默认位置**：给 `up` 传 `files`，或者在 worktree 根目录写 `.napbox.yaml`，内容是 `compose: server/compose.yaml`。
 - **改了 compose**：再调一次 `up`，会按新定义重建。
 - **改了 Dockerfile 或打进镜像的文件**：给 `up` 传 `build: true`，和 `docker compose up --build` 一样。不传时只在镜像还没有时构建。源码挂载进容器的文件不用重新构建。

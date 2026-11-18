@@ -18,8 +18,8 @@ actor Daemon {
     var wakeups: [String: StartProgress] = [:]
     /// 每个环境的 vsock 转发通道，连同它属于哪个 RunningEnvironment
     var relays: [String: (environment: ObjectIdentifier, connecting: Task<RelayMux, Error>)] = [:]
-    /// 每个环境的端口监听（宿主机端口 → 监听 channel），从登记到回收一直在
-    var listeners: [String: [Int: Channel]] = [:]
+    /// 每个环境的端口监听（宿主机端口 → 监听 channel，127.0.0.1 和 [::1] 各一个），从登记到回收一直在
+    var listeners: [String: [Int: [Channel]]] = [:]
     /// 正在转发的连接，休眠时断开
     let connections = ConnectionBoard()
     /// 代理上最后一次有数据往来的时间，判断闲置用
@@ -156,7 +156,8 @@ actor Daemon {
             worktree: record.worktree,
             ports: ports, hostPorts: host.map { HostPortInfo(name: $0.name, hostPort: $0.hostPort, variable: HostPortVariables.name(of: $0)) },
             egress: record.egress,
-            variables: PortVariables.all(active, hostPorts: host),
+            hostname: record.siteHostname,
+            variables: PortVariables.all(active, hostname: record.siteHostname, hostPorts: host),
             unsetVariables: record.definition?.unsetVariables ?? [],
             lastError: sessions[record.name]?.lastFailure?.message, serviceExits: sessions[record.name]?.exits ?? [],
             watchError: sessions[record.name]?.watchError,

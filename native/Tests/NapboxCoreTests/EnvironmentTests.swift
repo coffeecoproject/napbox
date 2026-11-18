@@ -167,14 +167,56 @@ import NapboxProtocol
         #expect((reset?["pending"] as? [String: [String: [String]]]) == ["replaceVolumes": ["volumes": ["db"]]])
     }
 
+    /// 主机名：环境名各段倒过来，每段转成一个标签；转写后撞名的加 -2，整段中文的用哈希
+    @Test func hostnames() {
+        var state = NapboxState()
+        func add(_ name: String) -> String {
+            var r = record(name, project: "p", repo: "/p", worktree: "/\(name)")
+            r.hostname = state.newHostname(for: name)
+            state.environments.append(r)
+            return r.siteHostname
+        }
+        #expect(add("crocwork/main") == "main.crocwork.localhost")
+        #expect(add("crocwork/feat_x") == "feat-x.crocwork.localhost")
+        #expect(add("crocwork/feat-x") == "feat-x-2.crocwork.localhost") // 和 feat_x 转写后撞了
+        #expect(add("crocwork/feat_x/e2e-1") == "e2e-1.feat-x.crocwork.localhost")
+        #expect(add("codeos/goal-12.v2") == "goal-12-v2.codeos.localhost")
+        #expect(add("my app/--x__y--") == "x-y.my-app.localhost")
+        let chinese = add("搭档/main")
+        #expect(chinese.hasSuffix(".localhost") && chinese.hasPrefix("main.x"))
+        #expect(add("拾页/main") != chinese) // 哈希按原来的名字算
+        #expect(add("搭档-2/main") == "main.2.localhost") // 还剩下字母数字的不用哈希
+        // 标签最长 63 个字符：截断后去掉末尾的 -，撞名时给 -2 让出位置
+        let long = String(repeating: "a", count: 62) + "_b"
+        #expect(add("p/\(long)") == String(repeating: "a", count: 62) + ".p.localhost")
+        #expect(add("p/\(long)x") == String(repeating: "a", count: 61) + "-2.p.localhost")
+    }
+
+    /// 加主机名之前的状态文件：读入时给每个环境补上，马上写回；之后读到的都一样
+    @Test func storeFillsMissingHostnames() throws {
+        try withProject(["x": ""]) { dir in
+            let url = dir.appending(path: "state.json")
+            var old = NapboxState()
+            old.environments = [record("p/main", project: "p", repo: "/p", worktree: "/p"), record("p/x", project: "p", repo: "/p", worktree: "/p/x")]
+            try DiskJSON.encoder.encode(old).write(to: url)
+            #expect(!(try String(contentsOf: url, encoding: .utf8)).contains("hostname"))
+            let store = try StateStore(url: url)
+            #expect(store.state.environments.map(\.hostname) == ["main.p.localhost", "x.p.localhost"])
+            #expect(try StateStore(url: url).state == store.state)
+            #expect((try String(contentsOf: url, encoding: .utf8)).contains("main.p.localhost"))
+        }
+    }
+
     @Test func storeRoundTripAndCorruption() throws {
         try withProject(["x": ""]) { dir in
             let url = dir.appending(path: "state.json")
             let store = try StateStore(url: url)
             #expect(store.state.environments.isEmpty)
             try store.update { s throws(NapboxError) in
-                s.environments.append(EnvironmentRecord(name: "p/main", project: "p", mainRepository: "/p", worktree: "/p", owner: .worktree,
-                                                        ports: [PortAssignment(service: "db", containerPort: 5432, hostPort: 40000)]))
+                var r = EnvironmentRecord(name: "p/main", project: "p", mainRepository: "/p", worktree: "/p", owner: .worktree,
+                                          ports: [PortAssignment(service: "db", containerPort: 5432, hostPort: 40000)])
+                r.hostname = s.newHostname(for: r.name)
+                s.environments.append(r)
             }
             #expect(try StateStore(url: url).state == store.state)
             var info = stat()
@@ -460,15 +502,59 @@ import NapboxProtocol
 
     @Test func hostPortVariables() {
         #expect(HostPortVariables.name(of: HostPortAssignment(name: "e2e_web", hostPort: 41230)) == "NAPBOX_HOST_E2E_WEB")
-        #expect(PortVariables.all([PortAssignment(service: "host", containerPort: 5432, hostPort: 41229)],
+        #expect(PortVariables.all([PortAssignment(service: "host", containerPort: 5432, hostPort: 41229)], hostname: "main.p.localhost",
                                   hostPorts: [HostPortAssignment(name: "server", hostPort: 41230)])
-            == ["NAPBOX_HOST_5432": "127.0.0.1:41229", "NAPBOX_HOST_SERVER": "41230"])
-        for good in ["server", "e2e_web", "worker2", "a"] { #expect(HostPortVariables.isValidName(good), "\(good)") }
-        for bad in ["Server", "e2e_1", "1abc", "_x", "web_", "web-api", ""] { #expect(!HostPortVariables.isValidName(bad), "\(bad)") }
-        // 服务叫 host 时它的端口变量不算本机进程的
+            == ["NAPBOX_HOST_5432": "127.0.0.1:41229", "NAPBOX_HOST_5432_SITE": "main.p.localhost:41229",
+                "NAPBOX_HOSTNAME": "main.p.localhost", "NAPBOX_HOST_SERVER": "41230"])
+        for good in ["server", "e2e_web", "worker2", "a", "web_site", "a_1x_site"] { #expect(HostPortVariables.isValidName(good), "\(good)") }
+        for bad in ["Server", "e2e_1", "1abc", "_x", "web_", "web-api", "", "x_80_site"] { #expect(!HostPortVariables.isValidName(bad), "\(bad)") }
+        // 服务叫 host 时它的端口变量（两种）不算本机进程的；服务叫 host_x 时它的浏览器地址变量也不算
         #expect(HostPortVariables.isVariable("NAPBOX_HOST_WORKER2"))
         #expect(!HostPortVariables.isVariable("NAPBOX_HOST_5432"))
+        #expect(!HostPortVariables.isVariable("NAPBOX_HOST_5432_SITE"))
+        #expect(!HostPortVariables.isVariable("NAPBOX_HOST_X_80_SITE"))
+        #expect(!HostPortVariables.isVariable("NAPBOX_HOSTNAME"))
         #expect(PortReferences.isServicePort("NAPBOX_HOST_5432") && !PortReferences.isServicePort("NAPBOX_HOST_WORKER2"))
+        #expect(PortReferences.isSite("NAPBOX_HOST_X_80_SITE") && !PortReferences.isSite("NAPBOX_WEB_SITE"))
+    }
+
+    /// 别的程序只在 [::1] 上监听：127.0.0.1 绑得上也不算空闲（主机名会先解析到 ::1），这次绑上的 127.0.0.1 也放开
+    @Test func portBusyOnIPv6Only() throws {
+        let port = range.lowerBound + 9
+        let fd = socket(AF_INET6, SOCK_STREAM, 0)
+        defer { close(fd) }
+        var one: Int32 = 1
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, socklen_t(MemoryLayout<Int32>.size))
+        var addr = sockaddr_in6()
+        addr.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+        addr.sin6_family = sa_family_t(AF_INET6)
+        addr.sin6_port = in_port_t(UInt16(port).bigEndian)
+        _ = inet_pton(AF_INET6, "::1", &addr.sin6_addr)
+        let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
+        #expect(bound == 0)
+        listen(fd, 128)
+        let locks = PortLocks()
+        #expect(!locks.lock(port))
+        #expect(locks.lockedPorts.isEmpty)
+        // 127.0.0.1 没被留着：别的程序照样绑得上
+        let v4 = occupy(port)
+        defer { close(v4) }
+        var got = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        #expect(withUnsafeMutablePointer(to: &got) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(v4, $0, &len) } } == 0)
+        #expect(UInt16(bigEndian: got.sin_port) == UInt16(port))
+    }
+
+    /// 锁上的端口 127.0.0.1 和 [::1] 两边都占着，各给一份副本
+    @Test func lockHoldsBothLoopbacks() throws {
+        let port = 38480
+        let locks = PortLocks()
+        #expect(locks.lock(port))
+        defer { locks.release(port) }
+        for address in PortLocks.Loopback.allCases { #expect(PortLocks.someoneListening(port, address), "\(address)") }
+        let copies = try #require(locks.duplicate(port))
+        #expect(copies.count == 2)
+        for fd in copies { close(fd) }
     }
 
     @Test func napboxdRestartRelocks() throws {
@@ -495,7 +581,8 @@ import NapboxProtocol
         let port = range.lowerBound + 8
         let locks = PortLocks()
         #expect(locks.lock(port))
-        let listener = try #require(locks.duplicate(port))
+        let copies = try #require(locks.duplicate(port))
+        let listener = copies[0] // 127.0.0.1 的那份
         let client = socket(AF_INET, SOCK_STREAM, 0)
         var addr = sockaddr_in()
         addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
@@ -508,7 +595,7 @@ import NapboxProtocol
         close(accepted) // 服务端先关：这一端进入 TIME_WAIT
         usleep(100_000)
         close(client)
-        close(listener)
+        for fd in copies { close(fd) }
         locks.release(port)
         usleep(100_000)
         #expect(locks.lock(port))

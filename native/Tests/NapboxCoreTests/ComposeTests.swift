@@ -690,6 +690,25 @@ extension [ComposeIssue] {
         }
     }
 
+    /// 给浏览器的地址（_SITE）和主机名：和端口变量一样，起服务时换成这个环境的，不用调用方环境里同名的
+    @Test func siteReferences() throws {
+        let files = ["compose.yaml": """
+            services:
+              api:
+                image: node:22
+                ports: ["3100"]
+                environment:
+                  PUBLIC_ORIGIN: http://${NAPBOX_API_3100_SITE}
+                  ALLOWED_HOSTS: ${NAPBOX_HOSTNAME},127.0.0.1
+            """]
+        let p = try load(files, env: ["NAPBOX_API_3100_SITE": "x.localhost:1", "NAPBOX_HOSTNAME": "x.localhost"])
+        #expect(p.unsetVariables.isEmpty)
+        let variables = PortVariables.variables([PortAssignment(service: "api", containerPort: 3100, hostPort: 41217)], hostname: "feat-x.p.localhost")
+        #expect(try #require(p.service("api")).environment.mapValues { PortReferences.resolve($0, variables) } == [
+            "PUBLIC_ORIGIN": "http://feat-x.p.localhost:41217", "ALLOWED_HOSTS": "feat-x.p.localhost,127.0.0.1",
+        ])
+    }
+
     @Test func portReferences() throws {
         let files = [
             "app.env": "LINK=http://${NAPBOX_API_3100}/media\n",
@@ -725,8 +744,11 @@ extension [ComposeIssue] {
                 ports: ["3100"]
                 environment:
                   OTHER: ${NAPBOX_WEB_80}
+                  OTHER_SITE: ${NAPBOX_WEB_80_SITE}
             """])
+        #expect(unknown.count == 2)
         #expect(unknown.mentions("services.api.environment.OTHER：NAPBOX_WEB_80 不是这个环境的端口变量"))
+        #expect(unknown.mentions("services.api.environment.OTHER_SITE：NAPBOX_WEB_80_SITE 不是这个环境的端口变量"))
 
         let elsewhere = try issues(["compose.yaml": """
             services:

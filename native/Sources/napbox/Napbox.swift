@@ -62,6 +62,7 @@ struct Status: ParsableCommand {
         for env in result.environments {
             print("\n\(env.name)  \(env.state.rawValue)  \(env.worktree)")
             if let owner = env.owner { print("  持有方：\(owner)\(env.confined == true ? "（confine：只能用代码目录里的文件）" : "")") }
+            print("  浏览器用的主机名：\(env.hostname)")
             for p in env.ports { print("  \(p.service):\(p.containerPort)\t\(env.variables[p.variable] ?? "")\t\(p.variable)") }
             for p in env.hostPorts { print("  本机 \(p.name)\t\(p.hostPort)\t\(p.variable)") }
             if let error = env.lastError { print("  最近出错：\(error)") }
@@ -146,14 +147,14 @@ struct TargetOptions: ParsableArguments {
 }
 
 struct Env: ParsableCommand, RawOutput {
-    static let configuration = CommandConfiguration(abstract: "输出当前 worktree 环境的端口变量（export NAPBOX_API_3100=127.0.0.1:41217），可以直接 eval \"$(napbox env)\"。不唤醒环境；出错时的 JSON 写到标准错误。")
+    static let configuration = CommandConfiguration(abstract: "输出当前 worktree 环境的端口变量（export NAPBOX_API_3100=127.0.0.1:41217，给浏览器的 NAPBOX_API_3100_SITE=feat-x.crocwork.localhost:41217，主机名 NAPBOX_HOSTNAME），可以直接 eval \"$(napbox env)\"。不唤醒环境；出错时的 JSON 写到标准错误。")
 
     @OptionGroup var options: TargetOptions
 
     func run() throws {
         let params = EnvironmentParams(target: options.target)
         let info = try Output.call(Method.environment, params: try Wire.value(params), as: EnvironmentInfo.self)
-        // 值只有 127.0.0.1:端口 或端口号，变量名只有大写字母、数字和下划线，不用转义
+        // 值只有 127.0.0.1:端口、主机名:端口、主机名或端口号（主机名只有小写字母、数字、- 和 .），变量名只有大写字母、数字和下划线，不用转义
         for (name, value) in info.variables.sorted(by: { $0.key < $1.key }) { print("export \(name)=\(value)") }
     }
 }

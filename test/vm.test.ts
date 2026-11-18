@@ -209,16 +209,30 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     const port = info.ports.find((p) => p.service === "web");
     assert.ok(port);
     assert.equal(info.variables[port.variable], `127.0.0.1:${port.hostPort}`);
-    const said = await new Promise<string>((resolve, reject) => {
-      const socket = connect(port.hostPort, "127.0.0.1");
-      socket.setEncoding("utf8");
-      socket.once("data", (data) => {
-        socket.destroy();
-        resolve(data as unknown as string);
+    assert.equal(info.hostname, "goal-1-work.codeos.localhost");
+    assert.equal(info.variables[`${port.variable}_SITE`], `${info.hostname}:${port.hostPort}`);
+    assert.equal(info.variables.NAPBOX_HOSTNAME, info.hostname);
+    const hear = (host: string) =>
+      new Promise<string>((resolve, reject) => {
+        const socket = connect(port.hostPort, host);
+        socket.setEncoding("utf8");
+        socket.once("data", (data) => {
+          socket.destroy();
+          resolve(data as unknown as string);
+        });
+        socket.once("error", reject);
+        socket.once("close", () => resolve("")); // 服务还没重新监听：转发连上又断开，没有数据
       });
-      socket.once("error", reject);
-    });
-    assert.equal(said.trim(), "你好 napbox");
+    // 127.0.0.1、::1 都转发到服务，主机名也连得上（浏览器先试 ::1）。
+    // 服务的 nc 回完一个连接才重新监听，紧接着连下一个可能赶在它重新监听之前，所以重试几次
+    for (const host of ["127.0.0.1", "::1", info.hostname]) {
+      let said = "";
+      for (let attempt = 0; attempt < 20 && !said.trim(); attempt++) {
+        if (attempt) await new Promise((r) => setTimeout(r, 100));
+        said = await hear(host).catch(() => "");
+      }
+      assert.equal(said.trim(), "你好 napbox", host);
+    }
 
     const started = await waitEvent("started", { purpose: "up" });
     const { runs } = await client.runs(target);

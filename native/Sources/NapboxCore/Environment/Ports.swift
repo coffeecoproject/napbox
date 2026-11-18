@@ -40,9 +40,14 @@ public struct PortRequest: Hashable, Sendable {
     }
 }
 
-/// 端口变量：每个登记的端口给一个 `NAPBOX_<服务>_<容器端口>` 变量，值是宿主机上连它的地址。
-/// 名字不能撞（compose 检查时用 name 查），status、up 的结果和 ports.json 都按这里拼。
+/// 端口变量：每个登记的端口给两个变量，名字不能撞（compose 检查时用 name 查），status、up 的结果和 ports.json 都按这里拼。
+/// - `NAPBOX_<服务>_<容器端口>` → `127.0.0.1:41217`：程序连它用
+/// - `NAPBOX_<服务>_<容器端口>_SITE` → `feat-x.crocwork.localhost:41217`：给浏览器打开的地址用，cookie 按环境分开（Hostnames）
+/// 另有一个 `NAPBOX_HOSTNAME` → `feat-x.crocwork.localhost`：本机进程的端口拼浏览器地址用
 public enum PortVariables {
+    static let siteSuffix = "_SITE"
+    public static let hostname = "NAPBOX_HOSTNAME"
+
     /// `NAPBOX_API_3100`：服务名转大写，字母数字以外的字符换成下划线。
     static func name(service: String, port: Int) -> String {
         let s = service.uppercased().unicodeScalars.map { c in
@@ -51,21 +56,29 @@ public enum PortVariables {
         return "NAPBOX_\(String(s))_\(port)"
     }
 
+    static func siteName(service: String, port: Int) -> String { name(service: service, port: port) + siteSuffix }
+
     /// 变量的值：`127.0.0.1:41217`
     static func value(hostPort: Int) -> String { "127.0.0.1:\(hostPort)" }
 
     public static func name(of a: PortAssignment) -> String { name(service: a.service, port: a.containerPort) }
+    public static func siteName(of a: PortAssignment) -> String { siteName(service: a.service, port: a.containerPort) }
 
-    /// 登记的端口对应的变量：名字 → 值
-    public static func variables(_ assignments: [PortAssignment]) -> [String: String] {
-        Dictionary(uniqueKeysWithValues: assignments.map { (name(of: $0), value(hostPort: $0.hostPort)) })
+    /// 服务端口的变量（两种）加上 NAPBOX_HOSTNAME：名字 → 值。compose 里能引用的就是这些（PortReferences）
+    public static func variables(_ assignments: [PortAssignment], hostname: String) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: entries(assignments, hostname: hostname))
     }
 
-    /// 交给调用方的全部变量：服务的端口加上本机程序的端口。两种变量名不会撞（HostPortVariables.isValidName）
-    public static func all(_ assignments: [PortAssignment], hostPorts: [HostPortAssignment]) -> [String: String] {
-        let service = assignments.map { (name(of: $0), value(hostPort: $0.hostPort)) }
+    /// 交给调用方的全部变量：服务的端口、主机名，加上本机程序的端口。几种变量名不会撞（HostPortVariables.isValidName）
+    public static func all(_ assignments: [PortAssignment], hostname: String, hostPorts: [HostPortAssignment]) -> [String: String] {
         let host = hostPorts.map { (HostPortVariables.name(of: $0), String($0.hostPort)) }
-        return Dictionary(uniqueKeysWithValues: service + host)
+        return Dictionary(uniqueKeysWithValues: entries(assignments, hostname: hostname) + host)
+    }
+
+    private static func entries(_ assignments: [PortAssignment], hostname: String) -> [(String, String)] {
+        [(Self.hostname, hostname)] + assignments.flatMap { a in
+            [(name(of: a), value(hostPort: a.hostPort)), (siteName(of: a), "\(hostname):\(a.hostPort)")]
+        }
     }
 }
 
@@ -73,83 +86,93 @@ public enum PortVariables {
 public enum HostPortVariables {
     static let prefix = "NAPBOX_HOST_"
 
-    /// 名字：小写字母开头，只用小写字母、数字和下划线，不以 `_` 或 `_数字` 结尾。
-    /// 服务端口的变量 NAPBOX_<服务>_<容器端口> 一定以 `_数字` 结尾，所以两种变量名不会撞，也分得开（isVariable）
+    /// 名字：小写字母开头，只用小写字母、数字和下划线，不以 `_`、`_数字` 或 `_数字_site` 结尾。
+    /// 服务端口的变量 NAPBOX_<服务>_<容器端口> 一定以 `_数字` 结尾、浏览器地址的变量以 `_数字_SITE` 结尾，
+    /// 所以几种变量名不会撞，也分得开（isVariable）
     public static func isValidName(_ name: String) -> Bool {
         guard let first = name.first, ("a"..."z").contains(first),
-              name.allSatisfy({ ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "_" }),
-              let last = name.split(separator: "_", omittingEmptySubsequences: false).last
+              name.allSatisfy({ ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "_" })
         else { return false }
-        return !last.isEmpty && !(name.contains("_") && last.allSatisfy(\.isNumber))
+        let parts = name.split(separator: "_", omittingEmptySubsequences: false)
+        func isPortNumber(_ p: Substring) -> Bool { !p.isEmpty && p.allSatisfy(\.isNumber) }
+        guard let last = parts.last, !last.isEmpty, !(parts.count > 1 && isPortNumber(last)) else { return false }
+        return !(parts.count > 2 && last == "site" && isPortNumber(parts[parts.count - 2]))
     }
 
     public static func name(of a: HostPortAssignment) -> String { prefix + a.name.uppercased() }
 
     /// 变量名是不是本机进程端口的样子（NAPBOX_HOST_ 后面是一个合规的名字）。服务叫 host 时它的
-    /// NAPBOX_HOST_5432 以 `_数字` 结尾，不算
+    /// NAPBOX_HOST_5432 以 `_数字` 结尾、NAPBOX_HOST_5432_SITE 以 `_数字_SITE` 结尾，不算
     public static func isVariable(_ variable: String) -> Bool {
         variable.hasPrefix(prefix) && isValidName(variable.dropFirst(prefix.count).lowercased())
     }
 }
 
-/// napboxd 持有的监听 socket，一个宿主机端口一个，只监听 127.0.0.1。
-/// 判断端口有没有被别的程序占用：
-/// 1. 不带 SO_REUSEADDR 绑定：绑上了就是完全空闲（别的程序监听在 127.0.0.1、0.0.0.0、[::] 上都会绑不上）。
+/// napboxd 持有的监听 socket：一个宿主机端口两个，127.0.0.1 和 [::1] 各一个。
+/// 两边都要占：环境的主机名（*.localhost）先解析到 ::1，只占 127.0.0.1 的话，别的程序在 ::1 上监听同一个端口时，
+/// 浏览器会连到它那里去。两边都绑得上才算锁上，有一边绑不上就都放开。
+/// 每一边判断端口有没有被别的程序占用：
+/// 1. 不带 SO_REUSEADDR 绑定：绑上了就是完全空闲（别的程序监听在这个地址或通配地址上都会绑不上）。
 /// 2. 绑不上时，可能是有程序在监听，也可能只是刚断开的连接还在 TIME_WAIT（napboxd 重启后常见）。
-///    这时才连一下 127.0.0.1 的这个端口：连得上就是有程序在监听，跳过。
+///    这时才连一下这个地址的这个端口：连得上就是有程序在监听，跳过。
 /// 3. 连不上，当作只是 TIME_WAIT，带 SO_REUSEADDR 再绑。
 /// 已知的误判：对方程序卡住、不接受连接、排队又满了时，第 2 步会连不上，被当作空闲。
 /// 不用 netstat 查监听列表：从程序里调用时看不到网络连接（2026-11-07 实测，终端里正常），不可靠。
 public final class PortLocks {
-    private var sockets: [Int: Int32] = [:]
+    /// 本机回环的两个地址
+    enum Loopback: CaseIterable, Sendable {
+        case v4, v6
+    }
+
+    private var sockets: [Int: [Int32]] = [:]
 
     public init() {}
 
     deinit {
-        for fd in sockets.values { close(fd) }
+        for fds in sockets.values { for fd in fds { close(fd) } }
     }
 
     public var lockedPorts: [Int] { sockets.keys.sorted() }
 
-    /// 已经锁着也算成功。被别的程序占着返回 false。
+    /// 已经锁着也算成功。有一边被别的程序占着返回 false，这次绑上的一边也放开。
     public func lock(_ port: Int) -> Bool {
         if sockets[port] != nil { return true }
-        let first = Self.listen(port, reuseAddress: false)
-        if let fd = first.fd {
-            sockets[port] = fd
-            return true
+        var fds: [Int32] = []
+        for address in Loopback.allCases {
+            guard let fd = Self.acquire(port, address) else {
+                for fd in fds { close(fd) }
+                return false
+            }
+            fds.append(fd)
         }
-        guard first.error == EADDRINUSE, !Self.someoneListening(port),
-              let fd = Self.listen(port, reuseAddress: true).fd else { return false }
-        sockets[port] = fd
+        sockets[port] = fds
         return true
     }
 
-    /// 127.0.0.1 上这个端口有没有程序在接受连接。本机回环的连接立刻就有结果，不需要超时。
-    static func someoneListening(_ port: Int) -> Bool {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
-        defer { close(fd) }
-        var addr = loopback(port)
-        let rc = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-        }
-        return rc == 0
+    private static func acquire(_ port: Int, _ address: Loopback) -> Int32? {
+        let first = listen(port, address, reuseAddress: false)
+        if let fd = first.fd { return fd }
+        guard first.error == EADDRINUSE, !someoneListening(port, address) else { return nil }
+        return listen(port, address, reuseAddress: true).fd
     }
 
-    /// 在 127.0.0.1 上绑定并监听，失败时给出 errno。
-    private static func listen(_ port: Int, reuseAddress: Bool) -> (fd: Int32?, error: Int32) {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+    /// 这个地址上这个端口有没有程序在接受连接。本机回环的连接立刻就有结果，不需要超时。
+    static func someoneListening(_ port: Int, _ address: Loopback) -> Bool {
+        let fd = socket(address.family, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+        return address.withSockaddr(port) { connect(fd, $0, $1) } == 0
+    }
+
+    /// 在这个地址上绑定并监听，失败时给出 errno。
+    private static func listen(_ port: Int, _ address: Loopback, reuseAddress: Bool) -> (fd: Int32?, error: Int32) {
+        let fd = socket(address.family, SOCK_STREAM, 0)
         guard fd >= 0 else { return (nil, errno) }
         _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
-        if reuseAddress {
-            var one: Int32 = 1
-            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
-        }
-        var addr = loopback(port)
-        let bound = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
-        }
+        var one: Int32 = 1
+        if reuseAddress { setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size)) }
+        if address == .v6 { setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &one, socklen_t(MemoryLayout<Int32>.size)) }
+        let bound = address.withSockaddr(port) { bind(fd, $0, $1) }
         guard bound == 0, Darwin.listen(fd, 128) == 0 else {
             let code = errno
             close(fd)
@@ -158,26 +181,24 @@ public final class PortLocks {
         return (fd, 0)
     }
 
-    private static func loopback(_ port: Int) -> sockaddr_in {
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(UInt16(port).bigEndian)
-        addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
-        return addr
-    }
-
-    /// 给端口代理用的副本（dup）：代理接受连接、关掉自己那份都不影响锁；锁只在 release 时放开。
-    public func duplicate(_ port: Int) -> Int32? {
-        guard let fd = sockets[port] else { return nil }
-        let copy = dup(fd)
-        guard copy >= 0 else { return nil }
-        _ = fcntl(copy, F_SETFD, FD_CLOEXEC)
-        return copy
+    /// 给端口代理用的副本（dup），两个地址各一个：代理接受连接、关掉自己那份都不影响锁；锁只在 release 时放开。
+    public func duplicate(_ port: Int) -> [Int32]? {
+        guard let fds = sockets[port] else { return nil }
+        var copies: [Int32] = []
+        for fd in fds {
+            let copy = dup(fd)
+            guard copy >= 0 else {
+                for c in copies { close(c) }
+                return nil
+            }
+            _ = fcntl(copy, F_SETFD, FD_CLOEXEC)
+            copies.append(copy)
+        }
+        return copies
     }
 
     public func release(_ port: Int) {
-        if let fd = sockets.removeValue(forKey: port) { close(fd) }
+        for fd in sockets.removeValue(forKey: port) ?? [] { close(fd) }
     }
 
     /// 端口现在有没有被别的程序占着：判断和 lock 一样，判断完马上放开，不占着。只用于不锁的端口（本机进程的端口）
@@ -185,6 +206,30 @@ public final class PortLocks {
         guard sockets[port] == nil, lock(port) else { return false }
         release(port)
         return true
+    }
+}
+
+extension PortLocks.Loopback {
+    var family: Int32 { self == .v4 ? AF_INET : AF_INET6 }
+
+    /// 127.0.0.1 或 [::1] 的这个端口
+    func withSockaddr<T>(_ port: Int, _ body: (UnsafePointer<sockaddr>, socklen_t) -> T) -> T {
+        switch self {
+        case .v4:
+            var addr = sockaddr_in()
+            addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            addr.sin_family = sa_family_t(AF_INET)
+            addr.sin_port = in_port_t(UInt16(port).bigEndian)
+            addr.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+            return withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { body($0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+        case .v6:
+            var addr = sockaddr_in6()
+            addr.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
+            addr.sin6_family = sa_family_t(AF_INET6)
+            addr.sin6_port = in_port_t(UInt16(port).bigEndian)
+            _ = inet_pton(AF_INET6, "::1", &addr.sin6_addr)
+            return withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { body($0, socklen_t(MemoryLayout<sockaddr_in6>.size)) } }
+        }
     }
 }
 

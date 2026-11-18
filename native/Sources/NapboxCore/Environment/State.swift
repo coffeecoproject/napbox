@@ -88,6 +88,9 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     public var hostPorts: [HostPortAssignment]?
     /// 虚拟机在系统 NAT 网段里的固定 IP
     public var ip: String?
+    /// 给浏览器用的主机名（Hostnames），登记时分配，之后不变。加主机名之前的状态文件里没有，读入时补上（StateStore），
+    /// 所以读出来的登记都有；对外用 siteHostname
+    public var hostname: String?
     /// up 时解析好的 compose，之后唤醒都用这一份，直到下次 up
     public var definition: ComposeProject?
     /// 已经成功跑完的一次性服务：唤醒时加进 pod 但不启动
@@ -150,6 +153,12 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     /// 怎么碰宿主机上的文件：confine 的限定在 confinedRoot 里
     public var hostAccess: HostAccess { confinedRoot.map { .confined(Confinement(root: $0)) } ?? .open }
 
+    /// 给浏览器用的主机名。登记里一定有：StateStore 读入时补上，新环境登记时（napboxd 的 prepare）分配
+    public var siteHostname: String {
+        guard let hostname else { preconditionFailure("环境 \(name) 的登记里没有主机名") }
+        return hostname
+    }
+
     /// 启用的服务的端口：转发、列出、写进 ports.json。其余只是锁着留给没启用的 profile，连上来直接断开
     public var activePorts: [PortAssignment] {
         ports.filter { definition?.service($0.service)?.ports.contains($0.containerPort) == true }
@@ -201,6 +210,8 @@ public final class StateStore {
         } catch {
             throw NapboxError(.stateCorrupted, "状态文件 \(url.path) 读不了（\(error)）。\(keep)")
         }
+        var filled = state
+        if filled.assignMissingHostnames() { try update { $0 = filled } }
     }
 
     /// 修改并立即写回磁盘（先写临时文件再改名，不会写一半）。body 抛错时什么都不改。
