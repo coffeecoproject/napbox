@@ -3,7 +3,7 @@
 import Foundation
 
 public enum NapboxVersion {
-    public static let current = "0.1.7"
+    public static let current = "0.1.8"
 }
 
 public enum Paths {
