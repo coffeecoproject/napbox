@@ -232,7 +232,8 @@ public actor Runtime {
             _ = try storage.recycleVolume(record, volume: name, reason: "\(service) 不再用这块匿名卷（镜像不再声明这个路径，或 compose 在这里挂了别的）")
         }
         let addresses = try ServiceNetwork.addresses(project.services.map(\.name))
-        let portVariables = PortVariables.variables(record.ports.filter { project.service($0.service)?.ports.contains($0.containerPort) == true })
+        let portVariables = PortVariables.variables(record.ports.filter { project.service($0.service)?.ports.contains($0.containerPort) == true },
+                                                    hostname: record.hostname)
         let shares = HostShares(record.hostAccess)
 
         // 每个 ContainerPlan 打开一个日志文件：中途失败时把已经打开的关上（napboxd 常驻，唤醒反复失败时句柄会越积越多）

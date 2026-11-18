@@ -62,6 +62,9 @@ export function describeEnvironment(info: EnvironmentInfo): string {
       `- ${port.service}:${port.containerPort} → 127.0.0.1:${port.hostPort}（变量 ${port.variable}）`,
     );
   }
+  lines.push(
+    `浏览器打开的页面地址用这个环境的主机名 ${info.hostname}（变量 NAPBOX_<服务>_<端口>_SITE 是主机名加端口，NAPBOX_HOSTNAME 是主机名），每个环境不同，cookie 不串；程序连服务仍用 127.0.0.1。`,
+  );
   for (const port of info.hostPorts) {
     lines.push(`- 本机程序用的 ${port.name} → 端口 ${port.hostPort}（变量 ${port.variable}，napbox 不占着，项目的程序自己监听）`);
   }

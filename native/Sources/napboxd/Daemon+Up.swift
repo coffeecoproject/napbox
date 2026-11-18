@@ -61,7 +61,8 @@ extension Daemon {
                                            seed: seed) { state in
                 EnvironmentRecord(
                     name: name, project: state.projectName(for: location.mainRepository), mainRepository: location.mainRepository.path,
-                    worktree: location.worktree.path, owner: .worktree, temporary: temporary
+                    worktree: location.worktree.path, owner: .worktree, hostname: state.newHostname(for: name, temporary: temporary),
+                    temporary: temporary
                 )
             }
         } catch {
@@ -74,7 +75,7 @@ extension Daemon {
         // ports.json 只写开发环境的：临时环境的端口在返回值里，也可以 napbox env --temp 再取
         if temporary == nil {
             try await Blocking.run { () throws(NapboxError) in
-                try PortsFile.write(environment: name, ports: registered.activePorts, hostPorts: registered.hostPorts ?? [], worktree: location.worktree)
+                try PortsFile.write(environment: name, hostname: registered.hostname, ports: registered.activePorts, hostPorts: registered.hostPorts ?? [], worktree: location.worktree)
             }
         }
         var result = info(registered)
@@ -143,8 +144,9 @@ extension Daemon {
                 return info(store.state.environment(name)!)
             }
         }
-        return info(try await bringUp(name, project: project, access: access, egress: egress, rebuild: false) { _ in
-            EnvironmentRecord(name: name, project: nil, mainRepository: nil, worktree: directory.path, owner: owner, confinedRoot: root)
+        return info(try await bringUp(name, project: project, access: access, egress: egress, rebuild: false) { state in
+            EnvironmentRecord(name: name, project: nil, mainRepository: nil, worktree: directory.path, owner: owner,
+                              hostname: state.newHostname(for: name, temporary: nil), confinedRoot: root)
         })
     }
 

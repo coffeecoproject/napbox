@@ -57,7 +57,8 @@ npx napbox setup codex
 
 - **一个 worktree 一个环境。** 环境叫 `<项目>/<worktree>`，主工作区是 `<项目>/main`。同一个项目的两个 worktree 可以同时运行，端口不冲突。
 - **端口。** compose 里只写容器端口（`- "5432"`）。napbox 在 `127.0.0.1` 上分一个宿主机端口，这个环境一直用它：休眠、唤醒、再次 `up`、napboxd 重启、换 profile 都不变，`down` 了才释放。别的 worktree 和临时环境是别的端口，所以要从 `napbox env` 读，不要写死。环境里的服务要知道自己在宿主机上的地址时（比如服务端生成给浏览器打开的链接），在 `environment` 或 `env_file` 里写 `${NAPBOX_API_3100}`，起服务时换成这个环境分到的地址（`127.0.0.1:41217`）。
-- **本机上跑的进程的端口。** 项目自己在本机跑的程序（开发后台、页面测试起的后台和网页）也要每个 worktree 一组端口时，在 compose 顶层写 `x-napbox: {host_ports: [server, web]}`。每个名字分一个端口，变量是 `NAPBOX_HOST_SERVER=41230`（只是端口号），和服务的端口一样固定到 `down`。napbox 不占着这些端口，由项目的程序自己监听：分的时候确认没人在用，之后要是被别的程序占了，项目的程序启动时会报端口被占。名字用小写字母、数字和下划线，小写字母开头，不能以 `_数字` 结尾。
+- **浏览器用的主机名。** 每个环境还有一个主机名，比如 `feat-x--crocwork.localhost`，解析到本机，不用配置。浏览器按主机名存 cookie、不看端口，所以页面地址用它：同一个浏览器里同时开几个 worktree，登录不会互相覆盖。每个端口有一个 `NAPBOX_API_3100_SITE=feat-x--crocwork.localhost:41217`，主机名本身是 `NAPBOX_HOSTNAME`；compose 里也能引用（`PUBLIC_ORIGIN: http://${NAPBOX_API_3100_SITE}`）。程序连服务还是用 `127.0.0.1`。napbox 同时占着 `127.0.0.1` 和 `[::1]` 上的端口。
+- **本机上跑的进程的端口。** 项目自己在本机跑的程序（开发后台、页面测试起的后台和网页）也要每个 worktree 一组端口时，在 compose 顶层写 `x-napbox: {host_ports: [server, web]}`。每个名字分一个端口，变量是 `NAPBOX_HOST_SERVER=41230`（只是端口号），和服务的端口一样固定到 `down`。napbox 不占着这些端口，由项目的程序自己监听：分的时候确认没人在用，之后要是被别的程序占了，项目的程序启动时会报端口被占。名字用小写字母、数字和下划线，小写字母开头，不能以 `_数字` 或 `_数字_site` 结尾。
 - **主目录的数据。** 在 compose 顶层写 `x-napbox: {seed: [pgdata, s3data]}`，新 worktree 就带着主目录的数据（账号、上传的文件）起来，不是空卷。worktree 的环境每次正常停下（闲置休眠、`napbox sleep`、napboxd 退出），napbox 把这些卷用 APFS 克隆留一份快照；新 worktree 第一次 `up` 复制主目录最新的快照，主目录不停也不冻结。复制只要几毫秒，两边都没写之前不多占空间。主目录还没有快照时 `up` 报 `snapshot_not_found`，不会用空卷起来。服务都在各自的 `stop_grace_period`（没写是 10 秒）内退出、存盘成功才算正常停下；没正常停下不拍快照，`status` 的 `snapshotError` 写着原因（`snapshot_not_found` 的报错里也有）。服务停得慢的，先看它的日志在等什么（有的等待可以关掉），确实要的时间再用更长的 `stop_grace_period` 留出来。迁移这类一次性服务会在复制来的数据上再跑一次。
 - **休眠。** 30 分钟没有连接就休眠，内存还给 macOS。下次连它的端口就自动唤醒，这条连接只等它连的服务（和这个服务依赖的）就绪，数据库一般约 1 秒，环境里其余服务在后台接着起。服务按依赖顺序一个个启动，排在后面的服务要等前面的先启动。这些服务里有写了 `develop.watch` 同步规则的，连接等整个环境起完，休眠期间改的文件这时已经同步进去。
 - **临时环境。** `napbox up --temp <名字>` 在开发环境旁边另起一个用完就扔的环境（比如测试用的空库），`napbox down --temp <名字>` 删掉它。`napbox run <服务>` 临时起一个环境，在前台跑一个服务，返回它的退出码。
@@ -72,7 +73,7 @@ npx napbox setup codex
 | 命令 | 作用 |
 |---|---|
 | `napbox up [-f compose] [--build] [--profile P]` | 创建或唤醒环境，等服务都就绪，输出端口和变量 |
-| `napbox env` | 输出 `export NAPBOX_<服务>_<端口>=127.0.0.1:<端口>`，可以直接 `eval "$(napbox env)"` |
+| `napbox env` | 输出 `export NAPBOX_<服务>_<端口>=127.0.0.1:<端口>`（还有给浏览器的 `_SITE` 和 `NAPBOX_HOSTNAME`），可以直接 `eval "$(napbox env)"` |
 | `napbox status [--text]` | napboxd 和各环境的状态、端口 |
 | `napbox logs <服务> [--tail N] [-f]` | 服务的日志，不唤醒环境 |
 | `napbox exec <服务> -- <命令>` | 在服务里执行命令（不支持交互） |

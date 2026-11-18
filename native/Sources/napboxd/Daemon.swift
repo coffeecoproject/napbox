@@ -18,8 +18,8 @@ actor Daemon {
     var wakeups: [String: StartProgress] = [:]
     /// 每个环境的 vsock 转发通道，连同它属于哪个 RunningEnvironment
     var relays: [String: (environment: ObjectIdentifier, connecting: Task<RelayMux, Error>)] = [:]
-    /// 每个环境的端口监听（宿主机端口 → 监听 channel），从登记到回收一直在
-    var listeners: [String: [Int: Channel]] = [:]
+    /// 每个环境的端口监听（宿主机端口 → 监听 channel，127.0.0.1 和 [::1] 各一个），从登记到回收一直在
+    var listeners: [String: [Int: [Channel]]] = [:]
     /// 正在转发的连接，休眠时断开
     let connections = ConnectionBoard()
     /// 代理上最后一次有数据往来的时间，判断闲置用
@@ -53,15 +53,21 @@ actor Daemon {
     /// 起环境失败后这段时间内的新连接直接断开
     static let launchFailureCooldown: TimeInterval = 10
 
-    /// 读状态文件，把登记过的端口重新锁上。锁不上的（napboxd 没运行期间被别的程序占了）记进日志，
-    /// 那个环境下次起的时候再试，还占着就报错说明。
+    /// 读状态文件，把登记过的端口重新锁上。锁不上的（napboxd 没运行期间被别的程序占了，或者本机回环监听不了）记进日志，
+    /// 那个环境下次起的时候再试，还不行就报错说明。
     /// - programs：napboxd 所在的目录，napbox-guard 和建盘的 mke2fs 这些和它放在一起
     init(supportDirectory: URL, programs: URL) throws(NapboxError) {
         store = try StateStore(url: supportDirectory.appending(path: "state.json"))
         runtime = Runtime(supportDirectory: supportDirectory, programs: programs)
         for env in store.state.environments {
-            for a in env.ports where !locks.lock(a.hostPort) {
-                print("环境 \(env.name) 的 \(a.service):\(a.containerPort) 登记的端口 \(a.hostPort) 被别的程序占着，没锁上")
+            for a in env.ports {
+                do {
+                    if try !locks.lock(a.hostPort) {
+                        print("环境 \(env.name) 的 \(a.service):\(a.containerPort) 登记的端口 \(a.hostPort) 被别的程序占着，没锁上")
+                    }
+                } catch {
+                    print("环境 \(env.name) 的 \(a.service):\(a.containerPort) 登记的端口 \(a.hostPort) 没锁上：\(error.message)")
+                }
             }
         }
         let count = store.state.environments.reduce(0) { $0 + $1.ports.count }
@@ -156,7 +162,8 @@ actor Daemon {
             worktree: record.worktree,
             ports: ports, hostPorts: host.map { HostPortInfo(name: $0.name, hostPort: $0.hostPort, variable: HostPortVariables.name(of: $0)) },
             egress: record.egress,
-            variables: PortVariables.all(active, hostPorts: host),
+            hostname: record.hostname,
+            variables: PortVariables.all(active, hostname: record.hostname, hostPorts: host),
             unsetVariables: record.definition?.unsetVariables ?? [],
             lastError: sessions[record.name]?.lastFailure?.message, serviceExits: sessions[record.name]?.exits ?? [],
             watchError: sessions[record.name]?.watchError,

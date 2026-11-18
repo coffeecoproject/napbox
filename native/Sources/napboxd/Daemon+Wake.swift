@@ -19,27 +19,35 @@ extension Daemon {
     func syncListeners(_ name: String) async {
         let wanted = Set(store.state.environment(name)?.ports.map(\.hostPort) ?? [])
         var current = listeners[name] ?? [:]
-        for (port, channel) in current where !wanted.contains(port) {
-            try? await channel.close()
+        for (port, channels) in current where !wanted.contains(port) {
+            for c in channels { try? await c.close() }
             current[port] = nil
         }
         for port in wanted where current[port] == nil {
-            guard let fd = locks.duplicate(port) else { continue } // 没锁上：起环境时会报 port_unavailable（lockPorts）
-            do {
-                current[port] = try await PortProxy.listen(descriptor: fd) { [weak self] inbound in
-                    Task { await self?.route(inbound, name: name, hostPort: port) }
+            guard let fds = locks.duplicate(port) else { continue } // 没锁上：起环境时会报 port_unavailable（lockPorts）
+            // 两个地址都开始监听才记下；有一个失败就都关掉、不记，下次同步时再试
+            var channels: [Channel] = []
+            for (i, fd) in fds.enumerated() {
+                do {
+                    channels.append(try await PortProxy.listen(descriptor: fd) { [weak self] inbound in
+                        Task { await self?.route(inbound, name: name, hostPort: port) }
+                    })
+                } catch {
+                    for rest in fds[i...] { close(rest) }
+                    for c in channels { try? await c.close() }
+                    channels = []
+                    print("环境 \(name) 的端口 \(port) 开始监听失败：\(error)")
+                    break
                 }
-            } catch {
-                close(fd)
-                print("环境 \(name) 的端口 \(port) 开始监听失败：\(error)")
             }
+            if !channels.isEmpty { current[port] = channels }
         }
         listeners[name] = current.isEmpty ? nil : current
     }
 
     func closeListeners(_ name: String) async {
         relays[name] = nil
-        for c in (listeners.removeValue(forKey: name) ?? [:]).values { try? await c.close() }
+        for c in (listeners.removeValue(forKey: name) ?? [:]).values.joined() { try? await c.close() }
     }
 
     /// 这个环境的 vsock 转发通道（RelayMux），第一个连接来时建。环境重启后虚拟机换了，通道也跟着换；连接失败下次再试。

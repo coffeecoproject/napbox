@@ -249,7 +249,7 @@ test("钩子：napboxd 没运行时，有 .napbox.yaml 的项目照样拦，并�
   assert.equal(hook({ hook_event_name: "SessionStart", cwd: plain }, noDaemon), undefined);
 });
 
-test("会话开始的说明：服务的端口和本机程序用的端口都列出来", () => {
+test("会话开始的说明：服务的端口、本机程序用的端口和浏览器用的主机名都列出来", () => {
   const note = describeEnvironment({
     name: "demo/main",
     state: "sleeping",
@@ -257,12 +257,19 @@ test("会话开始的说明：服务的端口和本机程序用的端口都列�
     ports: [{ service: "db", containerPort: 5432, hostPort: 41001, variable: "NAPBOX_DB_5432" }],
     hostPorts: [{ name: "server", hostPort: 41002, variable: "NAPBOX_HOST_SERVER" }],
     egress: "open",
-    variables: { NAPBOX_DB_5432: "127.0.0.1:41001", NAPBOX_HOST_SERVER: "41002" },
+    hostname: "main--demo.localhost",
+    variables: {
+      NAPBOX_DB_5432: "127.0.0.1:41001",
+      NAPBOX_DB_5432_SITE: "main--demo.localhost:41001",
+      NAPBOX_HOSTNAME: "main--demo.localhost",
+      NAPBOX_HOST_SERVER: "41002",
+    },
     unsetVariables: [],
     serviceExits: [],
   });
   assert.ok(note.includes("db:5432 → 127.0.0.1:41001（变量 NAPBOX_DB_5432）"));
   assert.ok(note.includes("server → 端口 41002（变量 NAPBOX_HOST_SERVER"));
+  assert.ok(note.includes("页面地址用这个环境的主机名 main--demo.localhost"));
 });
 
 test("命令入口：别的命令交给原生命令行，退出码和输出都是它的", () => {

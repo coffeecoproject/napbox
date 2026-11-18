@@ -174,13 +174,14 @@ struct ComposeBuilder {
     }
 
     /// x-napbox.host_ports 的名字：小写字母开头，只用小写字母、数字和下划线，不能重复。
-    /// 不能以 `_数字` 结尾：变量 NAPBOX_HOST_<名字> 就不会和服务端口的 NAPBOX_<服务>_<容器端口> 撞名，也不会被当成服务端口变量
+    /// 不能以 `_数字`、`_数字_site` 结尾：变量 NAPBOX_HOST_<名字> 就不会和服务端口的 NAPBOX_<服务>_<容器端口>、
+    /// NAPBOX_<服务>_<容器端口>_SITE 撞名，也不会被当成服务端口变量
     private mutating func hostPortNames(_ v: YAMLTree) -> [String] {
         var names: [String] = []
         for name in strings(v, "x-napbox.host_ports") {
             let p = "x-napbox.host_ports.\(name)"
             if !HostPortVariables.isValidName(name) {
-                issues.append(.invalid("\(p)：名字要小写字母开头，只用小写字母、数字和下划线，不能以 _数字 结尾（比如 server、e2e_web、worker2）"))
+                issues.append(.invalid("\(p)：名字要小写字母开头，只用小写字母、数字和下划线，不能以 _数字 或 _数字_site 结尾（比如 server、e2e_web、worker2）"))
             } else if names.contains(name) {
                 issues.append(.invalid("\(p)：重复了"))
             } else {
@@ -761,11 +762,13 @@ struct ComposeBuilder {
         }
     }
 
-    /// 引用的端口变量（PortReferences）只能用在 environment（含 env_file）里，要是启用的服务在 ports 里写的端口：
+    /// 引用的端口变量（PortReferences）只能用在 environment（含 env_file）里，要是启用的服务在 ports 里写的端口（或 NAPBOX_HOSTNAME）：
     /// 地址要到起服务时才填，别的字段（镜像、命令、挂载）读 compose 时就要定下来。
     /// 本机程序的端口（NAPBOX_HOST_<名字>）哪里都不能引用：环境里访问不到本机。
     private mutating func checkPortReferences(_ services: [Service]) {
-        let known = Set(services.flatMap { s in s.ports.map { PortVariables.name(service: s.name, port: $0) } })
+        let known = Set(services.flatMap { s in
+            s.ports.flatMap { [PortVariables.name(service: s.name, port: $0), PortVariables.siteName(service: s.name, port: $0)] }
+        } + [PortVariables.hostname])
         for s in services {
             for (k, v) in s.environment.sorted(by: { $0.key < $1.key }) {
                 for name in PortReferences.names(in: v) {
