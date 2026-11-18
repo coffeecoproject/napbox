@@ -1749,6 +1749,23 @@ secrets:
     file: ./keys/db.password
 `,
   );
+  // reset 时 secrets 的文件不在了：环境带一个命名卷，看 reset 有没有先换卷再失败
+  const resetSecret = repo(
+    "file-mount/reset-secret",
+    `services:
+  box:
+    image: node:22-alpine
+    command: ["sleep", "100000"]
+    volumes: ["data:/data"]
+    secrets: [db_password]
+    stop_grace_period: 1s
+secrets:
+  db_password:
+    file: ./keys/db.password
+volumes:
+  data:
+`,
+  );
   const target: EnvironmentTarget = { cwd: directory };
   const host = (relative: string) => path.join(directory, relative);
   let daemon: Daemon;
@@ -1840,6 +1857,31 @@ secrets:
       const { exitCode, stdout } = await execIn(client, other, "box", ["cat", "/run/secrets/db_password"]);
       assert.equal(exitCode, 0, stdout);
       assert.equal(stdout, "back\n");
+    } finally {
+      await client.down(other).catch(() => {});
+    }
+  });
+
+  // reset 不经过 up 的检查：要在停环境、换卷之前查，不然卷换掉了、环境停着起不来
+  test("reset 时 secrets 的文件没了：报错说清是哪个文件，环境照常在跑，数据卷没换；文件放回去 reset 照常", async () => {
+    const other: EnvironmentTarget = { cwd: resetSecret };
+    const file = path.join(resetSecret, "keys/db.password");
+    mkdirSync(path.dirname(file));
+    writeFileSync(file, "s3cret\n");
+    const marker = async () => (await execIn(client, other, "box", ["sh", "-c", "cat /data/marker 2>/dev/null; true"])).stdout;
+    try {
+      assert.equal((await client.up({ cwd: resetSecret, environment: {} })).state, "running");
+      assert.equal((await execIn(client, other, "box", ["sh", "-c", "echo kept > /data/marker"])).exitCode, 0);
+      rmSync(file);
+
+      const error = await rejectsWithCode(client.reset(other, ["data"]), "compose_invalid");
+      assert.match(error.message, /secrets 文件 .*keys\/db\.password 不存在/);
+      assert.equal((await client.environment(other)).state, "running", "环境不该被停掉");
+      assert.equal(await marker(), "kept\n", "数据卷不该被换掉");
+
+      writeFileSync(file, "back\n");
+      assert.equal((await client.reset(other, ["data"])).state, "running");
+      assert.equal(await marker(), "", "放回去以后 reset 照常换成空卷");
     } finally {
       await client.down(other).catch(() => {});
     }

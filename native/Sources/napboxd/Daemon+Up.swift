@@ -417,6 +417,9 @@ extension Daemon {
             let known = project.volumes.isEmpty ? "这个环境没有命名卷" : "有：\(project.volumes.joined(separator: "、"))"
             throw NapboxError(.volumeNotFound, "环境 \(name) 里没有数据卷 \(unknown.joined(separator: "、"))，\(known)")
         }
+        // 挂载的来源先查（secrets 的文件、confine 的路径）：起容器时才发现不成立的话，卷已经换了、环境停着起不来。
+        // 和 up 一样准备好了才停旧环境，不成立时卷不换、环境原样不动
+        try runtime.checkHostMounts(project, access: record.hostAccess)
         // 上次换卷换到一半失败了：先换完，免得这次的记号盖掉它（这时环境没在运行：launch 起来之前会先换完）
         if case .replaceVolumes(let pendingVolumes, let pendingSeed) = record.pending {
             _ = try finishReplace(record, volumes: pendingVolumes, seed: pendingSeed)
