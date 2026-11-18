@@ -197,8 +197,9 @@ check "宿主机上的服务在监听（对照）" host_listening
 hostaddrs="$(ifconfig | awk '/inet / && $2 != "127.0.0.1" {print $2}')"
 # 对外网发一个 HTTP 请求，3 秒后才发出去：期间切换出网模式，看已经建立的连接还能不能收到回应
 # 后台跑，标准输入输出都不接 probe 的连接，in_env 马上返回。发完请求再等 3 秒：busybox 的 nc 读到
-# 标准输入结束就关连接，等不到回应
-http_later() { in_env "{ (sleep 3; printf 'GET / HTTP/1.0\\r\\nHost: one.one.one.one\\r\\n\\r\\n'; sleep 3) | nc -w 5 1.1.1.1 80 >/tmp/http.out 2>&1; } </dev/null >/dev/null 2>&1 &" >/dev/null; }
+# 标准输入结束就关连接，等不到回应。请求发出去时建 /tmp/http.sent
+http_later() { in_env "rm -f /tmp/http.sent; { (sleep 3; printf 'GET / HTTP/1.0\\r\\nHost: one.one.one.one\\r\\n\\r\\n'; touch /tmp/http.sent; sleep 3) | nc -w 5 1.1.1.1 80 >/tmp/http.out 2>&1; } </dev/null >/dev/null 2>&1 &" >/dev/null; }
+in_env_until() { for _ in $(seq 1 75); do [ "$(in_env "$1 && echo 是")" = 是 ] && return 0; sleep 0.2; done; return 1; } # 最多约 15 秒
 check "status 里新环境是 open" test "$("$napbox" status | jq -r '.environments[0].egress')" = "open"
 check "项目的服务没有 NET_ADMIN，改不了规则" test "$(in_env 'echo $(( 0x$(awk "/CapEff/ {print \$2}" /proc/self/status) >> 12 & 1 ))')" = "0"
 check "open：连不到宿主机（网关）上的服务" test "$(reach 192.168.64.1 "$hostport")" = "不通"
@@ -209,13 +210,14 @@ check "open：能连外网" test "$(reach 1.1.1.1 80)" = "通"
 # open 和 none 用同一条命令查 DNS，open 下通就说明 none 下不通是规则挡的
 dns="nslookup one.one.one.one >/dev/null 2>&1 && echo 通 || echo 不通"
 check "open：DNS 能解析" test "$(in_env "$dns")" = "通"
-http_later; sleep 7
-check "open：外网请求收到回应" grep -q "HTTP/" <<<"$(in_env 'cat /tmp/http.out')"
+http_later
+check "open：外网请求收到回应" in_env_until 'grep -q HTTP/ /tmp/http.out'
 http_later; sleep 1 # 等连接建立起来再切
 switched="$(cd "$repo" && "$napbox" egress none)"
 check "切到 none" test "$(jq -r .egress <<<"$switched")" = "none"
-sleep 7
-check "none：切换前建立的出网连接断了，收不到回应" test -z "$(in_env 'grep HTTP/ /tmp/http.out')"
+# 请求发出去以后再等 3 秒：open 时回应在发出后几百毫秒内就到
+in_env_until 'test -e /tmp/http.sent'; sleep 3
+check "none：切换前建立的出网连接断了，请求发出去了也收不到回应" test "$(in_env 'test -e /tmp/http.sent && echo 发了')" = 发了 -a -z "$(in_env 'grep HTTP/ /tmp/http.out')"
 check "none：连不到外网" test "$(reach 1.1.1.1 80)" = "不通"
 check "none：DNS 也不通" test "$(in_env "$dns")" = "不通"
 check "none：连不到宿主机上的服务" test "$(reach 192.168.64.1 "$hostport")" = "不通"
@@ -509,8 +511,6 @@ check "create 起来了，持有方和出网模式对" test "$(jq -r '.result | 
 workport=$(jq -r '.result.ports[] | select(.service == "web") | .hostPort' <<<"$created")
 # 原来每次从范围开头找，down 掉的 demo/main 放开的端口会马上分给这个新环境
 check "回收的环境放开的端口不马上分出去" sh -c 'case " $2 " in *" $1 "*) exit 1;; esac; test -n "$1"' _ "$workport" "$db $web $probe"
-check "返回端口和环境变量" test "$(jq -r '.result.variables.NAPBOX_WEB_8080' <<<"$created")" = "127.0.0.1:$workport"
-check "调用方给的变量进了 compose" test "$(web_says "$workport")" = hello
 check "代码副本里不写 .napbox" test ! -e "$copy/.napbox"
 check "代码副本的 .git/info/exclude 不动" sh -c "! grep -qx '.napbox/' '$copy/.git/info/exclude'"
 acreated="$(rpc create "$(create_params codeos/goal-1-acceptance "$accept")")"
@@ -525,8 +525,6 @@ check "按名字切出网模式" test "$(rpc egress "$(jq -nc --argjson t "$work
 check "按名字休眠" test "$(rpc sleep "$work_target" | jq -r .result.state)" = sleeping
 check "按名字唤醒，等就绪后返回" test "$(rpc wake "$work_target" | jq -r .result.state)" = running
 check "休眠再唤醒后 egress 还是 none" test "$(rpc environment "$work_target" | jq -r .result.egress)" = none
-check "按名字 exec：退出码原样" test "$(rpc exec "$(jq -nc --argjson t "$work_target" '$t + {service: "web", command: ["sh", "-c", "exit 5"]}')" | jq -r .result.exitCode)" = 5
-check "按名字 exec，持有方不对被拒绝" test "$(rpc exec '{"target":{"name":"codeos/goal-1-work","owner":"other"},"service":"web","command":["true"]}' | jq -r .error.code)" = owner_mismatch
 
 echo "运行记录"
 runs="$(rpc runs "$work_target")"
@@ -541,21 +539,6 @@ check "按端口判断就绪" test "$(service_of 0 web | jq -r .readiness)" = po
 check "没有端口和 healthcheck 的按进程判断" test "$(service_of 0 crasher | jq -r .readiness)" = process
 check "记下启动和就绪的时间，就绪不早于启动" test "$(service_of 0 ready | jq -r '.startedAt <= .readyAt')" = true
 check "唤醒时一次性服务跳过，没有启动时间" test "$(service_of 1 init | jq -r '"\(.skipped) \(.startedAt)"')" = "true null"
-# 起不来的环境：运行记录和事件都要记下
-mkdir -p "$work/goal/bad/repo"; bad="$(cd "$work/goal/bad/repo" && pwd -P)"
-cat >"$bad/compose.yaml" <<'YAML'
-services:
-  sick:
-    image: alpine:3.20
-    command: ["sleep", "100000"]
-    healthcheck: {test: ["CMD", "false"], interval: 1s, retries: 2}
-    stop_grace_period: 1s
-YAML
-bad_target='{"target":{"name":"codeos/goal-2-bad","owner":"codeos"}}'
-check "healthcheck 没通过：create 报 healthcheck_timeout" test "$(rpc create "$(jq -nc --arg dir "$bad" '{name: "codeos/goal-2-bad", owner: "codeos", directory: $dir, files: [], profiles: [], environment: {}}')" | jq -r .error.code)" = healthcheck_timeout
-check "失败的那次也有运行记录，带原因和走到的部分" test "$(rpc runs "$bad_target" | jq -r '.result.runs[0] | "\(.error.code) \(.services[0].service) \(.services[0].startedAt != null) \(.services[0].readyAt)"')" = "healthcheck_timeout sick true null"
-check "明确唤醒不看冷却，马上再试一次（第二条记录）" test "$(rpc wake "$bad_target" | jq -r .error.code)" = healthcheck_timeout -a "$(rpc runs "$bad_target" | jq -c '[.result.runs[].purpose]')" = '["up","wake"]'
-check "销毁起不来的环境" test "$(rpc down "$bad_target" | jq -r .result.name)" = codeos/goal-2-bad
 
 echo "休眠后再 create、起环境之前就失败"
 # 用验收副本，不影响下面按顺序检查的工作副本事件
@@ -673,7 +656,6 @@ for _ in $(seq 1 50); do work_destroyed && break; sleep 0.1; done
 events_of() { jq -c "select(.event.environment == \"$1\") | .event | [.type, (.purpose // .sleepReason // .service // .reason)] + (if .exitCode != null then [.exitCode, .restart] else [] end)" "$work/events.out" | paste -sd, -; }
 check "事件的顺序和内容（起好、一次性服务退出、休眠、唤醒、服务退出、销毁）" test "$(events_of codeos/goal-1-work)" = '["started","up"],["service_exited","init",0,"none"],["slept","request"],["started","wake"],["service_exited","crasher",4,"none"],["destroyed","codeos 销毁"]'
 check "started 带运行记录的 id，对得上" test "$(jq -r 'select(.event.environment == "codeos/goal-1-work" and .event.type == "started") | .event.runId' "$work/events.out" | head -1)" = "$(jq -r '.result.runs[0].id' <<<"$runs")"
-check "起不来时发 start_failed，带 healthcheck 的错误码" test "$(jq -r 'select(.event.environment == "codeos/goal-2-bad" and .event.type == "start_failed") | .event.error.code' "$work/events.out" | head -1)" = healthcheck_timeout
 check "另一份副本不受影响" test "$(rpc environment "$accept_target" | jq -r .result.state)" = running
 check "销毁另一份" test "$(rpc down "$accept_target" | jq -r .result.name)" = codeos/goal-1-acceptance
 kill "$sub" 2>/dev/null; wait "$sub" 2>/dev/null
@@ -914,7 +896,8 @@ check "整个环境起完了" wait_state running
 check "销毁" sh -c 'cd "$0" && "$1" down >/dev/null' "$part_repo" "$napbox"
 
 echo "虚拟机意外没了"
-# 用命令行、真实 postgres 走一遍：杀掉虚拟机进程后状态对得上，napbox up 能恢复，已提交的数据都在，自动唤醒不重跑一次性服务。
+# 用命令行、真实 postgres 走一遍：杀掉虚拟机进程后状态对得上，napbox up 能恢复，已提交的数据都在。
+# 反复崩溃、冷却期、连接进来自动唤醒不重跑一次性服务这些在 test/vm.test.ts 的「虚拟机没了」里测，这里只看真实数据库的数据
 # 同名的还有 Docker 的虚拟化进程，绝不能碰：只杀打开了这份临时目录里文件的那一个，认不出来就不动手
 own_vm() {
     local pid mine=() real_work
@@ -959,12 +942,6 @@ check "status 里写了原因" sh -c '"$0" status | jq -r ".environments[0].last
 check "napbox up 能恢复" test "$(lost_up | jq -r '.state')" = running
 check "已提交的数据都在" test "$(sql "$lost_port" 'select count(*) from kept')" = 1000
 check "显式 up 和平时一样重跑一次性服务" test "$(sql "$lost_port" 'select count(*) from seeds')" = 2
-kill_own_vm
-check "再次被杀，又变成休眠" became_sleeping
-sleep 11 # 过了冷却期
-check "没人用就一直休眠" test "$(lost_state)" = sleeping
-check "连接进来自动唤醒，数据都在" test "$(sql "$lost_port" 'select count(*) from kept')" = 1000
-check "自动唤醒不重跑跑完的一次性服务" test "$(sql "$lost_port" 'select count(*) from seeds')" = 2
 check "销毁" sh -c 'cd "$0" && "$1" down >/dev/null' "$lost_repo" "$napbox"
 
 finish

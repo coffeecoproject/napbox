@@ -324,31 +324,6 @@ describe("临时环境", { concurrency: false }, () => {
     assert.equal(await ask(portOf(t2)), undefined);
     await client.down({ cwd });
   });
-
-  test("闲置到时间：开发环境休眠，临时环境销毁", async () => {
-    const idle = repo("idle", `x-napbox: {idle_minutes: 1}\n${COMPOSE}`);
-    const events: EnvironmentEvent[] = [];
-    const unsubscribe = await collectEvents(client, events);
-    const main = await client.up({ cwd: idle, environment: {} });
-    const temp = await client.up({ cwd: idle, environment: {}, temp: "left-behind" });
-    const directories = environmentDirectories();
-    await waitUntil(
-      "开发环境休眠、临时环境销毁",
-      async () => {
-        const { environments } = await client.status();
-        // 状态先变，事件在虚拟机停完以后才发
-        return environments.length === 1 && events.some((e) => e.environment === main.name && e.type === "slept");
-      },
-      150_000,
-    );
-    assert.equal((await client.environment({ cwd: idle })).state, "sleeping");
-    assert.deepEqual(await names(), [main.name]);
-    assert.equal(environmentDirectories(), directories - 1);
-    const destroyed = events.find((e) => e.environment === temp.name && e.type === "destroyed");
-    assert.match(destroyed?.reason ?? "", /idle/);
-    await unsubscribe();
-    await client.down({ cwd: idle });
-  });
 });
 
 describe("napbox run", { concurrency: false }, () => {
@@ -356,13 +331,27 @@ describe("napbox run", { concurrency: false }, () => {
   let client: NapboxClient;
   const cwd = repo("runproj", COMPOSE);
   let dev: EnvironmentInfo;
-  const names = async () => (await client.status()).environments.map((e) => e.name).sort();
+  // 闲置销毁要等 1 分多钟：这一组开头起一个闲置 1 分钟的临时环境，最后一条用例再查，和别的用例同时等。
+  // 它在另一个项目里，下面「只剩开发环境」的检查不算它
+  const idleEvents: EnvironmentEvent[] = [];
+  let stopIdleEvents: () => Promise<void> = async () => {};
+  let idle: EnvironmentInfo;
+  let idleDirectory = "";
+  const names = async () =>
+    (await client.status()).environments
+      .map((e) => e.name)
+      .filter((name) => name !== idle?.name)
+      .sort();
+  const directories = () => {
+    const dir = path.join(support, "environments");
+    return existsSync(dir) ? readdirSync(dir) : [];
+  };
   // 上一组回收开发环境时留下的那几份不算
   let recycledBefore = 0;
   /** 跑完以后只剩开发环境，临时环境的数据没留下 */
   async function assertOnlyDevLeft() {
     assert.deepEqual(await names(), [dev.name]);
-    assert.equal(environmentDirectories(), 1);
+    assert.equal(directories().filter((d) => d !== idleDirectory).length, 1);
     assert.equal(recycledEntries(), recycledBefore);
   }
   const runEnvironment = async () =>
@@ -377,9 +366,15 @@ describe("napbox run", { concurrency: false }, () => {
     daemon = await startDaemon(support, log);
     client = daemon.client;
     recycledBefore = recycledEntries();
+    stopIdleEvents = await collectEvents(client, idleEvents);
+    const existing = directories();
+    idle = await client.up({ cwd: repo("idle", `x-napbox: {idle_minutes: 1}\n${COMPOSE}`), environment: {}, temp: "left-behind" });
+    idleDirectory = directories().find((d) => !existing.includes(d)) ?? "";
+    assert.notEqual(idleDirectory, "", "闲置的临时环境有自己的数据目录");
     dev = await client.up({ cwd, environment: {} });
   });
   after(async () => {
+    await stopIdleEvents();
     await client.down({ cwd });
     await daemon.stop("SIGTERM");
   });
@@ -534,6 +529,23 @@ describe("napbox run", { concurrency: false }, () => {
     assert.equal(seen, false, "断开以后不该再登记、起环境");
     await delay(1_000);
     assert.equal(await runEnvironment(), undefined);
+    await assertOnlyDevLeft();
+  });
+
+  // 开发环境闲置休眠在 scripts/test-up.sh 的「闲置休眠」里测，这里只看临时环境
+  test("闲置到时间：临时环境销毁，不是休眠；数据目录删掉，不进 recycled", async () => {
+    await waitUntil(
+      "闲置的临时环境销毁",
+      async () => !(await client.status()).environments.some((e) => e.name === idle.name),
+      150_000,
+    );
+    const destroyed = await (async () => {
+      await waitUntil("destroyed 事件", () => idleEvents.some((e) => e.environment === idle.name && e.type === "destroyed"), 10_000);
+      return idleEvents.find((e) => e.environment === idle.name && e.type === "destroyed");
+    })();
+    assert.match(destroyed?.reason ?? "", /idle/);
+    assert.equal(idleEvents.some((e) => e.environment === idle.name && e.type === "slept"), false);
+    assert.equal(directories().includes(idleDirectory), false);
     await assertOnlyDevLeft();
   });
 });

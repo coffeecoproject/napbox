@@ -27,6 +27,7 @@ import Testing
                 // 说好整个文件，只给 100000 字节就断
                 connection.send(TestServer.head(200, length: Self.content.count))
                 connection.send(Self.content.prefix(100_000))
+                TestServer.letClientReadBeforeClosing()
             } else {
                 connection.respond(range: request.range, of: Self.content)
             }
@@ -118,6 +119,7 @@ import Testing
             if index == 0 {
                 connection.send(TestServer.head(200, length: Self.content.count))
                 connection.send(Self.content.prefix(10_000))
+                TestServer.letClientReadBeforeClosing()
             } else {
                 connection.send(TestServer.head(503, length: 0))
             }
@@ -215,6 +217,13 @@ private final class TestServer: Sendable {
             send(Data("HTTP/1.1 206 Partial Content\r\nContent-Range: bytes \(start)-\(content.count - 1)/\(content.count)\r\nContent-Length: \(content.count - start)\r\nConnection: close\r\n\r\n".utf8))
             send(content.subdata(in: start..<content.count))
         }
+    }
+
+    /// 给了一部分数据就断开时，断开前先等一会儿。数据和断开一起到的话，URLSession 有时直接报连接断了，
+    /// 前面那部分数据不交给 delegate，partial 里就什么都没有（连跑 10 次挂 6 次）。真实网络断线前的数据是
+    /// 陆续到的，不会这样；要测的是「收到过的留着、接着下」，所以先让客户端把这部分读走再断
+    static func letClientReadBeforeClosing() {
+        Thread.sleep(forTimeInterval: 0.2)
     }
 
     static func head(_ status: Int, length: Int) -> Data {

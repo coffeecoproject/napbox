@@ -538,7 +538,9 @@ describe("调用方持有的环境", { concurrency: false }, () => {
     assert.ok(runs[0]?.services[0]?.startedAt);
     assert.equal(runs[0]?.services[0]?.readyAt, undefined);
     assert.ok((await client.environment(bad)).lastError);
+    // 明确唤醒不看冷却，马上再试一次：多一条 wake 的记录
     await rejectsWithCode(client.wake(bad), "healthcheck_timeout");
+    assert.deepEqual((await client.runs(bad)).runs.map((r) => r.purpose), ["up", "wake"]);
     const raw = await rawCall(daemon.socketPath, methods.runs, { target: bad });
     assert.deepEqual(RunsResult.parse(raw.result), raw.result);
     await client.down(bad);

@@ -1,11 +1,17 @@
 # test-native.sh 和 test-up.sh 共用的部分：编译、计数的 check、结尾的汇总。用 source 引入。
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# 编译（默认 debug 版），设好 bin、napboxd、napbox；编译失败时输出最后的编译信息并退出
+# 编译（默认 debug 版），设好 bin、napboxd、napbox；编译失败时输出最后的编译信息并退出。
+# scripts/test-all.sh 先编译好、拷到别处，用 NAPBOX_BUILT_DEBUG / NAPBOX_BUILT_RELEASE 给出目录，这里就不再编译
 build_native() {
-    local out
-    out="$("$root/scripts/build-native.sh" "${1:-debug}" 2>&1)" || { tail -40 <<<"$out"; echo "编译失败"; exit 1; }
-    bin="$(tail -1 <<<"$out")"
+    local out config="${1:-debug}" built
+    if [ "$config" = release ]; then built="${NAPBOX_BUILT_RELEASE:-}"; else built="${NAPBOX_BUILT_DEBUG:-}"; fi
+    if [ -n "$built" ]; then
+        bin="$built"
+    else
+        out="$("$root/scripts/build-native.sh" "$config" 2>&1)" || { tail -40 <<<"$out"; echo "编译失败"; exit 1; }
+        bin="$(tail -1 <<<"$out")"
+    fi
     napboxd="$bin/napboxd"
     napbox="$bin/napbox"
 }

@@ -1,5 +1,6 @@
 // 文件变化通知和 develop.watch：真的起虚拟机，让真的 chokidar 收事件。从 scripts/test-client.sh watch 运行
-// 镜像库用临时的，要能访问 Docker Hub 和 npm。
+// 镜像库用正在用的那份的 APFS 克隆（会往里写构建出来的镜像，正在用的不该被碰）。构建时的基础镜像由构建虚拟机
+// 自己拉，还是要能访问 Docker Hub 和 npm。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -30,6 +31,8 @@ if (!real) throw new Error("要用 scripts/test-client.sh watch 运行");
 const work = realpathSync(mkdtempSync(path.join(tmpdir(), "nbx-watch-")));
 const support = path.join(work, "support");
 mkdirSync(support);
+// cp -c：APFS 克隆，两边各改各的
+execFileSync("cp", ["-c", "-R", path.join(real, "images"), path.join(support, "images")]);
 symlinkSync(path.join(real, "kernel"), path.join(support, "kernel"));
 symlinkSync(path.join(real, "runc"), path.join(support, "runc"));
 const log = path.join(work, "napboxd.log");
