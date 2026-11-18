@@ -371,7 +371,7 @@ test("正常退出（bootout）后不再拉起；down 回收环境", { timeout: 
   assert.equal(down.isError, false, JSON.stringify(down.value));
   assert.equal((await client.tool("env", { directory: project })).value.error.code, "environment_not_found");
   assert.equal(spawnSync("launchctl", ["bootout", service]).status, 0);
-  await delay(12_000); // 超过 launchd 默认的 10 秒重启间隔
-  assert.equal((await client.tool("status")).value.error.code, "daemon_unavailable");
+  // 登录项注销了，launchd 手里没有这个服务，也就没有谁会再拉起它：不用等重启间隔
   assert.notEqual(launchPrint().status, 0);
+  await waitUntil("napboxd 退出", async () => (await client.tool("status")).value.error?.code === "daemon_unavailable", 10_000);
 });
