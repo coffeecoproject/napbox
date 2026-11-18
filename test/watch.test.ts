@@ -171,6 +171,7 @@ describe("文件变化通知", { concurrency: false }, () => {
     writeFileSync(path.join(project, "tools/start.sh"), START);
     writeFileSync(path.join(src, "a.txt"), "v1\n");
     writeFileSync(path.join(src, "sub/b.txt"), "b\n");
+    writeFileSync(path.join(src, "saved.txt"), "s1\n");
     writeFileSync(path.join(ro, "r.txt"), "r1\n");
     writeFileSync(path.join(project, ".gitignore"), "tools/events.log\n");
     execFileSync("git", ["-C", project, "add", "-A"]);
@@ -196,11 +197,13 @@ describe("文件变化通知", { concurrency: false }, () => {
     assert.equal(statSync(file).mtimeMs, modified, "通知不能改文件的修改时间");
   });
 
+  // 用自己的文件，不用上一条刚改过的 a.txt：chokidar 对同一个文件，上一次 change 之后 50 毫秒内的 change 直接丢掉
+  // （不补发，原生 Linux 上也一样）。看到上一条的事件就马上再存 a.txt，两次常常不到 50 毫秒
   test("改名覆盖保存（编辑器和 agent 常见的写法）", async () => {
     const from = mark();
-    writeFileSync(path.join(src, "a.tmp"), "atomic\n");
-    renameSync(path.join(src, "a.tmp"), path.join(src, "a.txt"));
-    const event = await waitEvent(from, "a.txt 变成新内容", (e) => e.path === "/src/a.txt" && e.content === "atomic\n");
+    writeFileSync(path.join(src, "saved.tmp"), "atomic\n");
+    renameSync(path.join(src, "saved.tmp"), path.join(src, "saved.txt"));
+    const event = await waitEvent(from, "saved.txt 变成新内容", (e) => e.path === "/src/saved.txt" && e.content === "atomic\n");
     assert.ok(event.event === "add" || event.event === "change", event.event);
   });
 
