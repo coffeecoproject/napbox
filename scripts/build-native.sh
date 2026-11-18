@@ -17,12 +17,22 @@ codesign -f -s - --entitlements "$root/native/napboxd.entitlements" "$bin/napbox
 
 # 数据卷和构建缓存用 e2fsprogs 的 mke2fs 建（native/Sources/NapboxRuntime/DataDisk.swift），去掉 lost+found 用它的
 # debugfs：从固定版本的源码编译 macOS 版，连同它自带的 mke2fs.conf 放在 napboxd 旁边。源码包按 sha256 校验后留着，
-# 发布时原样放进包里（mke2fs、debugfs 是 GPLv2，scripts/pack.ts）。编译结果按版本留在 native/.build 下，下次直接用
+# 发布时原样放进包里（mke2fs、debugfs 是 GPLv2，scripts/pack.ts，这个脚本也一起放进去：GPL 要求带上控制编译的脚本）。
+# 和 napboxd 一样按 Package.swift 写的最低 macOS 版本编译，否则产物只能在编译它的那台机器的系统版本上跑。
+# 编译结果按版本留在 native/.build 下，编译参数没变就直接用
 e2fsprogs_version=1.47.4
 e2fsprogs_sha256=da274408bebbfd13a5a2fc3cfc66e3ffff17c48534673aa67f88d49b99123b96
 e2fsprogs="$root/native/.build/e2fsprogs-$e2fsprogs_version"
 e2fsprogs_tarball="$e2fsprogs/e2fsprogs-$e2fsprogs_version.tar.gz"
-if [ ! -x "$e2fsprogs/build/misc/mke2fs" ] || [ ! -x "$e2fsprogs/build/debugfs/debugfs" ]; then
+macos="$(sed -n 's/.*\.macOS("\([0-9.]*\)").*/\1/p' "$root/native/Package.swift")"
+[ -n "$macos" ] || { echo "native/Package.swift 里找不到最低 macOS 版本" >&2; exit 1; }
+# 只要 mke2fs、debugfs 和它们用的库；源码路径换成 /e2fsprogs 开头
+e2fsprogs_configure=(--disable-nls --disable-fuse2fs --disable-e2initrd-helper --disable-defrag --disable-tdb
+    --disable-uuidd --without-libarchive --disable-imager --disable-resizer)
+e2fsprogs_cflags="-O2 -ffile-prefix-map=$e2fsprogs=/e2fsprogs"
+e2fsprogs_configured="MACOSX_DEPLOYMENT_TARGET=$macos CFLAGS=$e2fsprogs_cflags ${e2fsprogs_configure[*]}"
+if [ "$(cat "$e2fsprogs/build/configured" 2>/dev/null)" != "$e2fsprogs_configured" ] \
+    || [ ! -x "$e2fsprogs/build/misc/mke2fs" ] || [ ! -x "$e2fsprogs/build/debugfs/debugfs" ]; then
     rm -rf "$e2fsprogs/src" "$e2fsprogs/build"
     mkdir -p "$e2fsprogs/src" "$e2fsprogs/build"
     if ! echo "$e2fsprogs_sha256  $e2fsprogs_tarball" | shasum -a 256 -c - >/dev/null 2>&1; then
@@ -32,14 +42,12 @@ if [ ! -x "$e2fsprogs/build/misc/mke2fs" ] || [ ! -x "$e2fsprogs/build/debugfs/d
             || { echo "e2fsprogs-$e2fsprogs_version.tar.gz 的 sha256 不对" >&2; rm -f "$e2fsprogs_tarball"; exit 1; }
     fi
     tar -xzf "$e2fsprogs_tarball" -C "$e2fsprogs/src" --strip-components=1
-    # 只要 mke2fs、debugfs 和它们用的库；源码路径同样换掉
-    (cd "$e2fsprogs/build" &&
-        CFLAGS="-O2 -ffile-prefix-map=$e2fsprogs=/e2fsprogs" ../src/configure --disable-nls --disable-fuse2fs \
-            --disable-e2initrd-helper --disable-defrag --disable-tdb --disable-uuidd --without-libarchive \
-            --disable-imager --disable-resizer >/dev/null &&
+    (cd "$e2fsprogs/build" && export MACOSX_DEPLOYMENT_TARGET="$macos" &&
+        CFLAGS="$e2fsprogs_cflags" ../src/configure "${e2fsprogs_configure[@]}" >/dev/null &&
         make -j"$(sysctl -n hw.ncpu)" libs >/dev/null &&
         make -j"$(sysctl -n hw.ncpu)" -C misc mke2fs >/dev/null &&
         make -j"$(sysctl -n hw.ncpu)" -C debugfs debugfs >/dev/null)
+    echo "$e2fsprogs_configured" >"$e2fsprogs/build/configured"
 fi
 cp "$e2fsprogs/build/misc/mke2fs" "$e2fsprogs/build/debugfs/debugfs" "$bin/"
 cp "$e2fsprogs/build/misc/mke2fs.conf" "$bin/mke2fs.conf"

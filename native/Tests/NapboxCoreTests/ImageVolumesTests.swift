@@ -51,6 +51,16 @@ struct ImageVolumesTests {
         #expect(name.hasPrefix(ComposeProject.anonymousVolumePrefix))
     }
 
+    /// 从匿名卷的名字认出是哪个服务的（服务名里有 _ 也认得对），不是匿名卷的名字认不出
+    @Test func anonymousVolumeServiceIsRecovered() {
+        for service in ["db", "web_app", "a_1b2c3d4e5f6a", "x-y"] {
+            #expect(ComposeProject.anonymousVolumeService(ComposeProject.anonymousVolumeName(service: service, path: "/data")) == service)
+        }
+        #expect(ComposeProject.anonymousVolumeService("pgdata") == nil)
+        #expect(ComposeProject.anonymousVolumeService("_anon_db") == nil)
+        #expect(ComposeProject.anonymousVolumeService("_anon_db_nothexdigits") == nil)
+    }
+
     @Test func reservedPrefixIsRejected() throws {
         let found = try issues(["compose.yaml": """
             services:

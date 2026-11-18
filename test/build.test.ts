@@ -467,3 +467,181 @@ RUN mkdir -p /data/sub /data/sticky /real/dir \\
     assert.equal(await sh("seeded", "stat -c '%u:%g' /real/dir /real/dir/file"), "1000:1000\n1000:1000\n");
   });
 });
+
+// 镜像在 Dockerfile 里声明了 VOLUME、compose 没在那个路径挂东西的：和 Docker 一样给一块匿名卷，不写进根文件系统。
+// 匿名卷跟着服务走（docker compose 重建容器时默认沿用旧容器的匿名卷）：镜像不再声明的移到 recycled，服务删了的留到 down。
+describe("镜像声明的 VOLUME：没挂东西的路径给匿名卷", { concurrency: false }, () => {
+  const dir = path.join(work, "anonymous");
+  const target = { cwd: dir };
+  let daemon: Daemon;
+  let client: NapboxClient;
+
+  const dockerfile = (volumes: string) => `FROM alpine:3.20
+RUN mkdir -p /vol/sub /other \\
+ && echo seed > /vol/sub/seed.txt && chown -R 1234:2345 /vol && chmod 750 /vol && chmod 640 /vol/sub/seed.txt \\
+ && echo other > /other/o.txt
+VOLUME ${volumes}
+`;
+  // keeper 什么都没挂：两个声明的路径都给匿名卷。covered 在同样的路径上挂了命名卷和绑定目录：不另建匿名卷。
+  // nested 只在 /vol 下面挂了绑定目录：/vol 照样给匿名卷，绑定目录挂在它上面看得见（框架和 Docker 一样按层数从浅到深挂）
+  // keeper：on 照常；profile 放进没启用的 profile；off 从 compose 里删掉
+  const compose = (keeperEnv: string, keeper: "on" | "profile" | "off" = "on") => `services:
+${keeper !== "off" ? `  keeper:
+    image: nbx-test-anon:local
+    build: {context: .}
+    environment: {V: "${keeperEnv}"}${keeper === "profile" ? `\n    profiles: ["extra"]` : ""}
+    command: ["sleep", "100000"]
+    stop_grace_period: 1s
+` : ""}  covered:
+    image: nbx-test-anon:local
+    build: {context: .}
+    command: ["sleep", "100000"]
+    volumes: ["data:/vol", "./host-other:/other"]
+    stop_grace_period: 1s
+  nested:
+    image: nbx-test-anon:local
+    build: {context: .}
+    command: ["sleep", "100000"]
+    volumes: ["./plugins:/vol/plugins"]
+    stop_grace_period: 1s
+volumes:
+  data:
+`;
+
+  before(async () => {
+    daemon = await startDaemon(support, log);
+    client = daemon.client;
+    mkdirSync(path.join(dir, "host-other"), { recursive: true });
+    mkdirSync(path.join(dir, "plugins"), { recursive: true });
+    writeFileSync(path.join(dir, "plugins/p.txt"), "plugin\n");
+    execFileSync("git", ["init", "-q", dir]);
+    writeFileSync(path.join(dir, "Dockerfile"), dockerfile('["/vol", "/other"]'));
+    writeFileSync(path.join(dir, "compose.yaml"), compose("1"));
+    await client.up({ cwd: dir, environment: {} });
+  });
+  after(async () => {
+    await client.down(target).catch(() => {});
+    await daemon.stop("SIGTERM");
+  });
+
+  async function sh(service: string, command: string): Promise<string> {
+    let text = "";
+    const { exitCode } = await client.exec({
+      target,
+      service,
+      command: ["sh", "-c", command],
+      onOutput: (o) => {
+        text += Buffer.from(o.data).toString();
+      },
+    });
+    assert.equal(exitCode, 0, `${service} 里 ${command}：${text}`);
+    return text;
+  }
+  /** 各环境的数据卷文件里，名字以 prefix 开头的（完整路径，排好序） */
+  function volumeFiles(prefix: string): string[] {
+    const environments = path.join(support, "environments");
+    if (!existsSync(environments)) return [];
+    return execFileSync("find", [environments, "-path", "*/volumes/*", "-name", `${prefix}*.ext4`]).toString().trim().split("\n").filter(Boolean).sort();
+  }
+  const keeperVolumes = () => volumeFiles("_anon_keeper_");
+
+  test("第一次 up：没挂东西的两个路径各有一块匿名卷，带着镜像里的内容、属主和权限", async () => {
+    assert.equal(keeperVolumes().length, 2);
+    assert.match(await sh("keeper", "mount | grep ' /vol '"), /^\/dev\/vd/);
+    assert.match(await sh("keeper", "mount | grep ' /other '"), /^\/dev\/vd/);
+    assert.equal(await sh("keeper", "cat /vol/sub/seed.txt /other/o.txt"), "seed\nother\n");
+    assert.equal(await sh("keeper", "stat -c '%u:%g %a' /vol /vol/sub/seed.txt"), "1234:2345 750\n1234:2345 640\n");
+  });
+
+  test("同一路径挂了命名卷或绑定目录的服务不另建匿名卷", async () => {
+    assert.deepEqual(volumeFiles("_anon_covered_"), []);
+    assert.match(await sh("covered", "mount | grep ' /vol '"), /^\/dev\/vd/);
+    assert.equal(await sh("covered", "cat /vol/sub/seed.txt"), "seed\n");
+    // 绑定目录是宿主机上的空目录：看到的是它，不是镜像里的内容
+    assert.equal(await sh("covered", "ls -A /other"), "");
+  });
+
+  test("只在声明的路径下面挂了绑定目录：上层照样给匿名卷，下面的绑定目录不被盖住", async () => {
+    assert.equal(volumeFiles("_anon_nested_").length, 2);
+    assert.match(await sh("nested", "mount | grep ' /vol '"), /^\/dev\/vd/);
+    assert.equal(await sh("nested", "cat /vol/sub/seed.txt /vol/plugins/p.txt"), "seed\nplugin\n");
+  });
+
+  test("匿名卷也是标准格式的 ext4：有目录索引（dir_index）", () => {
+    const debugfs = path.join(process.env.NAPBOX_BIN ?? "", "debugfs");
+    assert.equal(keeperVolumes().length, 2);
+    for (const file of keeperVolumes()) {
+      const stats = execFileSync(debugfs, ["-R", "stats", file], { stdio: ["ignore", "pipe", "ignore"] }).toString();
+      const features = stats.match(/^Filesystem features:\s*(.*)$/m)?.[1]?.split(/\s+/) ?? [];
+      assert.ok(features.includes("dir_index"), `${file}：${features.join(" ")}`);
+      assert.ok(features.includes("metadata_csum"), `${file}：${features.join(" ")}`);
+    }
+  });
+
+  test("写进匿名卷的数据：休眠唤醒、根文件系统重建后都还在", async () => {
+    await sh("keeper", "echo mine > /vol/mine.txt");
+    await client.sleep(target);
+    await client.wake(target);
+    assert.equal(await sh("keeper", "cat /vol/mine.txt"), "mine\n");
+    writeFileSync(path.join(dir, "compose.yaml"), compose("2"));
+    await client.up({ cwd: dir, environment: {} });
+    const keeper = (await client.runs(target)).runs.at(-1)?.services.find((s) => s.service === "keeper");
+    assert.equal(keeper?.rootfs, "unpacked", "keeper 的定义变了，根文件系统应该重建");
+    assert.equal(await sh("keeper", "cat /vol/mine.txt"), "mine\n");
+    assert.equal(keeperVolumes().length, 2);
+  });
+
+  test("匿名卷不能单独 reset", async () => {
+    const name = path.basename(keeperVolumes()[0] ?? "", ".ext4");
+    assert.match(name, /^_anon_keeper_[0-9a-f]{12}$/);
+    await rejectsWithCode(client.reset(target, [name]), "volume_not_found");
+  });
+
+  /** recycled 下留着的匿名卷文件的名字 */
+  const recycledVolumes = () =>
+    existsSync(path.join(support, "recycled"))
+      ? execFileSync("find", [path.join(support, "recycled"), "-path", "*/volumes/*", "-name", "_anon_*.ext4"]).toString().trim().split("\n").filter(Boolean).map((f) => path.basename(f))
+      : [];
+
+  test("镜像不再声明某个路径：那块匿名卷移到 recycled 保留，别的照旧", async () => {
+    const before = keeperVolumes();
+    writeFileSync(path.join(dir, "Dockerfile"), dockerfile('["/vol"]'));
+    await client.up({ cwd: dir, environment: {}, build: true });
+    const after = keeperVolumes();
+    assert.equal(after.length, 1);
+    assert.ok(before.includes(after[0] ?? ""), "留下的是原来那块");
+    const dropped = before.filter((file) => !after.includes(file)).map((file) => path.basename(file));
+    assert.equal(dropped.length, 1);
+    assert.ok(recycledVolumes().includes(dropped[0] ?? ""), `recycled 里应该有 ${dropped[0]}`);
+    assert.equal(await sh("keeper", "cat /vol/mine.txt"), "mine\n");
+    // /other 回到根文件系统里镜像的内容
+    assert.match(await sh("keeper", "mount | grep ' /other ' || echo none"), /^none$/m);
+    assert.equal(await sh("keeper", "cat /other/o.txt"), "other\n");
+  });
+
+  test("服务删了、换 profile 没启用：它的匿名卷留着（和 compose 留给孤立的容器一样），加回来照样用", async () => {
+    const before = keeperVolumes();
+    assert.equal(before.length, 1);
+    for (const keeper of ["off", "profile"] as const) {
+      writeFileSync(path.join(dir, "compose.yaml"), compose("2", keeper));
+      await client.up({ cwd: dir, environment: {} });
+      const started = (await client.runs(target)).runs.at(-1)?.services.map((s) => s.service) ?? [];
+      assert.ok(started.includes("covered") && !started.includes("keeper"), `${keeper}：${started.join("、")}`);
+      assert.deepEqual(keeperVolumes(), before, keeper);
+    }
+    writeFileSync(path.join(dir, "compose.yaml"), compose("2"));
+    await client.up({ cwd: dir, environment: {} });
+    assert.equal(await sh("keeper", "cat /vol/mine.txt"), "mine\n");
+  });
+
+  test("down 之后匿名卷跟着环境回收，再 up 是新的一块，带着镜像里的内容", async () => {
+    await sh("keeper", "echo again > /vol/again.txt");
+    const before = keeperVolumes();
+    assert.equal(before.length, 1);
+    await client.down(target);
+    assert.deepEqual(keeperVolumes(), []);
+    await client.up({ cwd: dir, environment: {} });
+    assert.equal(await sh("keeper", "ls /vol/again.txt 2>/dev/null || echo gone"), "gone\n");
+    assert.equal(await sh("keeper", "cat /vol/sub/seed.txt"), "seed\n");
+  });
+});

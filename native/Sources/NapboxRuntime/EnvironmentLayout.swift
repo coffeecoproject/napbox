@@ -155,15 +155,11 @@ struct EnvironmentLayout: Sendable {
         return path
     }
 
-    /// 不再用的匿名卷（镜像不再声明那个路径、服务删了）：删掉，和 Docker 新建的容器用不到旧容器留下的匿名卷一样
-    func removeAnonymousVolumes(except used: Set<String>) {
+    /// 已经建过的匿名卷的名字
+    func anonymousVolumes() -> [String] {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.appending(path: "volumes").path)) ?? []
-        for file in files where file.hasPrefix(ComposeProject.anonymousVolumePrefix) && file.hasSuffix(".ext4") {
-            let name = String(file.dropLast(".ext4".count))
-            guard !used.contains(name) else { continue }
-            try? FileManager.default.removeItem(at: directory.appending(path: Self.volumePath(name)))
-            forgetPopulated(name)
-        }
+        return files.filter { $0.hasPrefix(ComposeProject.anonymousVolumePrefix) && $0.hasSuffix(".ext4") }
+            .map { String($0.dropLast(".ext4".count)) }.sorted()
     }
 
     // 命名卷带上镜像内容。Docker 是建容器时看一次：卷是空的、镜像里有这个目录就复制。

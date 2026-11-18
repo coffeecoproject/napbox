@@ -212,7 +212,7 @@ public actor Runtime {
                       progress: StartProgress) async throws(NapboxError) -> RunningEnvironment {
         let (store, vmm) = try await prepare()
         // 镜像声明了 VOLUME、compose 没在那个路径挂东西的，和 Docker 一样各给一块匿名卷（ImageVolumes.swift）：
-        // 先拿到各服务的镜像，把匿名卷加进来，下面都按加好的这份起。不再用的匿名卷（镜像不声明了、服务删了）删掉
+        // 先拿到各服务的镜像，把匿名卷加进来，下面都按加好的这份起
         var images: [String: Containerization.Image] = [:]
         var declared: [String: [String]] = [:]
         for s in composeProject.services {
@@ -223,7 +223,14 @@ public actor Runtime {
         let project = composeProject.withImageVolumes(declared)
         guard let ip = record.ip else { throw NapboxError(.internalError, "环境 \(record.name) 没有分配 IP") }
         let layout = try EnvironmentLayout(directory: storage.environmentDirectory(record))
-        layout.removeAnonymousVolumes(except: Set(project.volumes))
+        // 这次起的服务不再用的匿名卷（镜像不再声明这个路径，或者 compose 在这个路径挂了别的）：移到 recycled 下保留 7 天
+        // （Docker 重建容器时也不再挂它）。
+        // 服务删了、换 profile 没启用的不动：和 docker compose 一样，留到 down 时跟着环境回收，服务加回来照样用
+        let active = Set(project.services.map(\.name))
+        for name in layout.anonymousVolumes() where !project.volumes.contains(name) {
+            guard let service = ComposeProject.anonymousVolumeService(name), active.contains(service) else { continue }
+            _ = try storage.recycleVolume(record, volume: name, reason: "\(service) 不再用这块匿名卷（镜像不再声明这个路径，或 compose 在这里挂了别的）")
+        }
         let addresses = try ServiceNetwork.addresses(project.services.map(\.name))
         let portVariables = PortVariables.variables(record.ports.filter { project.service($0.service)?.ports.contains($0.containerPort) == true })
         let shares = HostShares(record.hostAccess)

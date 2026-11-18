@@ -14,5 +14,6 @@ Their licenses and notices are in THIRD_PARTY_NOTICES.txt in the npm package.
 
 The npm package also includes mke2fs and debugfs from e2fsprogs, unmodified,
 as separate programs that napboxd runs to create data disks. They are licensed
-under the GNU General Public License version 2; their complete source code is
-in third-party/ in the npm package.
+under the GNU General Public License version 2; their complete source code and
+the script that builds them (build-native.sh) are in third-party/ in the npm
+package.

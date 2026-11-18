@@ -150,8 +150,14 @@ test("插件的启动脚本从 registry 安装固定版本，启动 MCP 服务",
   const installed = path.join(home, "Library/Caches/napbox/versions", version, "node_modules/napbox");
   assert.ok(existsSync(path.join(installed, "dist/cli.js")));
   assert.ok(existsSync(path.join(installed, "native/napboxd")));
-  // mke2fs、debugfs 是 GPLv2：包里带着编译它们的源码
-  assert.ok(readdirSync(path.join(installed, "third-party")).some((name) => /^e2fsprogs-[\d.]+\.tar\.gz$/.test(name)));
+  // mke2fs、debugfs 是 GPLv2：包里带着编译它们的源码和控制编译的脚本
+  const thirdParty = readdirSync(path.join(installed, "third-party"));
+  assert.ok(thirdParty.some((name) => /^e2fsprogs-[\d.]+\.tar\.gz$/.test(name)), thirdParty.join("、"));
+  assert.ok(thirdParty.includes("build-native.sh"), thirdParty.join("、"));
+  // 和 napboxd 能跑的最低 macOS 版本一样：编译它们的机器系统更新，也不能只在新系统上能跑
+  const minos = (name: string) => /minos (\S+)/.exec(execFileSync("vtool", ["-show-build", path.join(installed, "native", name)], { encoding: "utf8" }))?.[1];
+  assert.match(minos("napboxd") ?? "", /^\d+\.\d+/);
+  for (const name of ["mke2fs", "debugfs"]) assert.equal(minos(name), minos("napboxd"), name);
   assert.ok(existsSync(path.join(installed, "node_modules/zod")) || existsSync(path.join(installed, "../zod")));
   // 包里的 napboxd 签名和权限还在：npm 打包、解开后不能丢
   const signature = spawnSync("codesign", ["-d", "--entitlements", "-", path.join(installed, "native/napboxd")], { encoding: "utf8" });

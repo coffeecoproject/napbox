@@ -24,24 +24,34 @@ struct DataDisk: Sendable {
     /// 在 path 新建一块 bytes 大的空盘。稀疏文件，写多少占多少：新文件读出来全是 0，所以告诉 mke2fs 不用清零
     /// （assume_storage_prezeroed），内核挂上后也不会在后台补着清零。根目录是空的：去掉 lost+found，
     /// 否则 postgres 这类要求目录为空的程序初始化会失败（Docker 的卷是普通目录，本来就没有它）。
-    /// path 已经有东西时先删掉。
+    /// 先在旁边的 <名字>.creating 建好，最后一步改名过去：中途失败或 napboxd 被杀，path 上不会留下建到一半的盘
+    /// （调用方见到 path 有文件就直接用）。上次留下的 .creating 先删掉；path 已经有东西时换掉。
     func create(at path: URL, bytes: UInt64) throws {
-        if FileManager.default.fileExists(atPath: path.path) { try FileManager.default.removeItem(at: path) }
+        let creating = Self.creatingPath(path)
+        if FileManager.default.fileExists(atPath: creating.path) { try FileManager.default.removeItem(at: creating) }
         do {
             let made = try Subprocess.run(mke2fs.path, [
-                "-q", "-F", "-t", "ext4", "-E", "root_owner=0:0,assume_storage_prezeroed=1", path.path, "\(bytes / 1024)k",
+                "-q", "-F", "-t", "ext4", "-E", "root_owner=0:0,assume_storage_prezeroed=1", creating.path, "\(bytes / 1024)k",
             ], environment: ["MKE2FS_CONFIG": config.path])
             guard made.status == 0 else { throw Failure(message: "mke2fs 退出码 \(made.status)：\(made.stderrText)") }
             // debugfs 出错也是退出码 0，只在标准错误里说：除了开头那行版本号，有别的就是失败
-            let removed = try Subprocess.run(debugfs.path, ["-w", "-R", "rmdir lost+found", path.path])
+            let removed = try Subprocess.run(debugfs.path, ["-w", "-R", "rmdir lost+found", creating.path])
             let errors = removed.stderrText.split(separator: "\n").dropFirst().filter { !$0.isEmpty }
             guard removed.status == 0, errors.isEmpty else {
                 throw Failure(message: "debugfs 删不了 lost+found：\(errors.joined(separator: "；"))")
             }
+            guard rename(creating.path, path.path) == 0 else {
+                throw Failure(message: "改名到 \(path.path) 失败：\(String(cString: strerror(errno)))")
+            }
         } catch {
-            try? FileManager.default.removeItem(at: path)
+            try? FileManager.default.removeItem(at: creating)
             throw error
         }
+    }
+
+    /// 建盘时先用的临时文件
+    static func creatingPath(_ path: URL) -> URL {
+        path.deletingLastPathComponent().appending(path: path.lastPathComponent + ".creating")
     }
 
     struct Failure: Error, CustomStringConvertible {

@@ -35,7 +35,8 @@ for (const name of ["napbox", "napboxd", "napbox-guard", "mke2fs", "debugfs"]) {
   await chmod(path.join(target, "native", name), 0o755);
 }
 await copyFile(path.join(products, "mke2fs.conf"), path.join(target, "native", "mke2fs.conf"));
-// mke2fs、debugfs 是 GPLv2：编译它们用的源码包原样放进包里（scripts/build-native.sh 下载并校验过 sha256）
+// mke2fs、debugfs 是 GPLv2：编译它们用的源码包原样放进包里（scripts/build-native.sh 下载并校验过 sha256），
+// 控制编译的脚本也放进去（GPLv2 第 3 条：完整源码包括控制编译、安装的脚本）
 const buildScript = await readFile(path.join(root, "scripts/build-native.sh"), "utf8");
 const e2fsprogsVersion = /^e2fsprogs_version=(\S+)$/m.exec(buildScript)?.[1];
 if (!e2fsprogsVersion) throw new Error("scripts/build-native.sh 里找不到 e2fsprogs_version");
@@ -43,6 +44,7 @@ const e2fsprogs = path.join(root, "native/.build", `e2fsprogs-${e2fsprogsVersion
 const e2fsprogsSource = `e2fsprogs-${e2fsprogsVersion}.tar.gz`;
 await mkdir(path.join(target, "third-party"), { recursive: true });
 await copyFile(path.join(e2fsprogs, e2fsprogsSource), path.join(target, "third-party", e2fsprogsSource));
+await copyFile(path.join(root, "scripts/build-native.sh"), path.join(target, "third-party", "build-native.sh"));
 
 for (const name of ["LICENSE", "NOTICE", "README.md", "README.zh-CN.md"]) {
   await copyFile(path.join(root, name), path.join(target, name));
@@ -89,7 +91,7 @@ const packed = await execFile("npm", ["pack", "--pack-destination", out], { cwd:
 process.stdout.write(`${path.join(out, packed.stdout.trim().split("\n").at(-1) as string)}\n`);
 
 /** 打进包里的第三方代码的许可证和 NOTICE：Swift 包按 Package.resolved，napbox-guard 按实际链接的 Go 模块，再加 Go 标准库，
- * 和 e2fsprogs（NOTICE 里是 GPLv2 全文，libuuid 另有 COPYING） */
+ * 和 e2fsprogs（NOTICE 里是 GPLv2 全文，libuuid 另有 COPYING；libet、libss 是 MIT 式许可，只写在源码文件开头） */
 async function thirdPartyNotices(): Promise<string> {
   const sections: string[] = [];
   const rule = "=".repeat(78);
@@ -127,9 +129,15 @@ async function thirdPartyNotices(): Promise<string> {
   const goLicense = existsSync(path.join(goroot as string, "LICENSE")) ? [] : [path.dirname(goroot as string)];
   await add(`Go standard library (${goVersion})`, goroot as string, ...goLicense);
   await add(
-    `e2fsprogs ${e2fsprogsVersion}: native/mke2fs, native/debugfs, native/mke2fs.conf (complete source: third-party/${e2fsprogsSource})`,
+    `e2fsprogs ${e2fsprogsVersion}: native/mke2fs, native/debugfs, native/mke2fs.conf (complete source: third-party/${e2fsprogsSource}, built by third-party/build-native.sh)`,
     path.join(e2fsprogs, "src"),
     path.join(e2fsprogs, "src/lib/uuid"),
   );
+  for (const [library, file] of [["libss", "lib/ss/mit-sipb-copyright.h"], ["libet", "lib/et/com_err.c"]] as const) {
+    const text = await readFile(path.join(e2fsprogs, "src", file), "utf8");
+    const notice = /\/\*[\s\S]*?\*\//.exec(text)?.[0];
+    if (!notice?.includes("Permission to use, copy, modify")) throw new Error(`${file} 开头没有许可声明`);
+    sections.push(`${rule}\ne2fsprogs ${e2fsprogsVersion} ${library}: ${file}\n${rule}\n\n${notice}\n`);
+  }
   return `Licenses and notices of the third-party software compiled into the programs in native/.\n\n${sections.join("\n")}`;
 }
