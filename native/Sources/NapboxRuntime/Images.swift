@@ -27,6 +27,24 @@ enum Images {
         return project.services.first { $0.image == image && $0.build != nil }?.build
     }
 
+    /// 镜像声明的 VOLUME 路径（镜像配置里的 config.Volumes）。Containerization 的 ImageConfig 不读这一项，直接读配置原文
+    static func declaredVolumes(_ image: Containerization.Image) async throws(NapboxError) -> [String] {
+        struct Config: Decodable {
+            struct Settings: Decodable {
+                struct Empty: Decodable {}
+                let Volumes: [String: Empty]?
+            }
+            let config: Settings?
+        }
+        do {
+            let manifest = try await image.manifest(for: linuxArm64)
+            let config: Config = try await image.getContent(digest: manifest.config.digest).decode()
+            return (config.config?.Volumes ?? [:]).keys.sorted()
+        } catch {
+            throw NapboxError(.imageUnavailable, "\(image.reference) 的镜像配置读不了：\(error)")
+        }
+    }
+
     /// 环境构建出来的镜像都在这个名字下面，回收时一起删
     static func builtPrefix(environment id: String) -> String { "napbox.local/\(id)/" }
 

@@ -1,4 +1,4 @@
-// 运行宿主机上的命令（git、arp）：等它结束，拿到退出码和输出。
+// 运行宿主机上的命令（git、arp、建盘的 mke2fs）：等它结束，拿到退出码和输出。
 import Foundation
 
 public enum Subprocess {
@@ -11,10 +11,14 @@ public enum Subprocess {
     }
 
     /// 运行不了（比如程序不存在）时抛出 Foundation 的错误。
-    public static func run(_ executable: String, _ arguments: [String]) throws -> Output {
+    /// - environment：在 napboxd 自己的环境变量上加的
+    public static func run(_ executable: String, _ arguments: [String], environment: [String: String] = [:]) throws -> Output {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
+        if !environment.isEmpty {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+        }
         let out = Pipe(), err = Pipe()
         process.standardOutput = out
         process.standardError = err

@@ -8,7 +8,6 @@ import ContainerizationOCI
 import Foundation
 import NapboxCore
 import NapboxProtocol
-import SystemPackage
 
 actor ImageBuilder {
     struct Request: Sendable {
@@ -41,14 +40,17 @@ actor ImageBuilder {
     private let directory: URL
     /// napbox-guard：构建引擎启动后用它查网关（gateway 子命令）
     private let guardBinary: URL
+    /// 建构建缓存那块盘
+    private let disk: DataDisk
     private let queue = Slots(limit: 1)
     /// 正在跑的构建虚拟机：napboxd 退出时要让引擎先退出再关（stopEngine）
     private var active: LinuxPod?
     private var stopping = false
 
-    init(directory: URL, guardBinary: URL) {
+    init(directory: URL, guardBinary: URL, disk: DataDisk) {
         self.directory = directory
         self.guardBinary = guardBinary
+        self.disk = disk
     }
 
     private var exiting: NapboxError { NapboxError(.daemonUnavailable, "napboxd 正在退出") }
@@ -221,10 +223,9 @@ actor ImageBuilder {
         let path = directory.appending(path: "cache.ext4")
         if FileManager.default.fileExists(atPath: path.path) { return path }
         do {
-            let formatter = try EXT4.Formatter(FilePath(path.path), minDiskSize: Self.cacheBytes, journal: EnvironmentLayout.journal)
-            try formatter.close()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try disk.create(at: path, bytes: Self.cacheBytes)
         } catch {
-            try? FileManager.default.removeItem(at: path)
             throw NapboxError(.internalError, "建不了构建缓存卷：\(error)")
         }
         return path

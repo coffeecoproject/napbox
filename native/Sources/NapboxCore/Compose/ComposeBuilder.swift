@@ -43,6 +43,10 @@ struct ComposeBuilder {
             case "volumes":
                 for (name, v) in value.entries ?? [] {
                     volumes.append(name)
+                    // 这个开头留给 napbox 给镜像的 VOLUME 建的匿名卷（ImageVolumes.swift）
+                    if name.hasPrefix(ComposeProject.anonymousVolumePrefix) {
+                        issues.append(.invalid("volumes.\(name)：\(ComposeProject.anonymousVolumePrefix) 开头的卷名留给 napbox 的匿名卷，换个名字"))
+                    }
                     for (k, _) in v.entries ?? [] where k != "name" {
                         issues.append(.unsupported("volumes.\(name).\(k)：命名卷只支持 name（由 napbox 按环境管理）"))
                     }

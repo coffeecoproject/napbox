@@ -128,9 +128,16 @@ async function install(source: string, destination: string) {
   await mkdir(parent, { recursive: true });
   const staging = await mkdtemp(path.join(parent, ".install-"));
   try {
-    for (const name of ["napboxd", "napbox-guard"]) {
+    // napboxd 用到的都和它放在一起：网络小容器的程序，建数据盘的 e2fsprogs 程序和它的配置
+    for (const [name, mode] of [
+      ["napboxd", 0o755],
+      ["napbox-guard", 0o755],
+      ["mke2fs", 0o755],
+      ["debugfs", 0o755],
+      ["mke2fs.conf", 0o644],
+    ] as const) {
       await cp(path.join(source, name), path.join(staging, name));
-      await chmod(path.join(staging, name), 0o755);
+      await chmod(path.join(staging, name), mode);
     }
     await rm(destination, { recursive: true, force: true });
     await rename(staging, destination);

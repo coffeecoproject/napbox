@@ -141,22 +141,29 @@ struct EnvironmentLayout: Sendable {
         }
     }
 
-    /// 命名卷：第一次用时建一个空的 ext4。去掉 lost+found，否则 postgres 这类要求目录为空的程序初始化会失败
-    /// （Docker 的卷是普通目录，本来就没有它）。
-    func volume(_ name: String) throws(NapboxError) -> URL {
+    /// 命名卷：第一次用时建一块空盘（DataDisk）
+    func volume(_ name: String, disk: DataDisk) throws(NapboxError) -> URL {
         let path = directory.appending(path: Self.volumePath(name))
         if FileManager.default.fileExists(atPath: path.path) { return path }
         // 新的卷（第一次用，或者 napbox reset 之后）：每个服务都要重新看要不要带镜像内容
         forgetPopulated(name)
         do {
-            let formatter = try EXT4.Formatter(FilePath(path.path), minDiskSize: Self.volumeBytes, journal: Self.journal)
-            try formatter.unlink(path: FilePath("/lost+found"))
-            try formatter.close()
+            try disk.create(at: path, bytes: Self.volumeBytes)
         } catch {
-            try? FileManager.default.removeItem(at: path)
             throw NapboxError(.internalError, "建不了数据卷 \(name)：\(error)")
         }
         return path
+    }
+
+    /// 不再用的匿名卷（镜像不再声明那个路径、服务删了）：删掉，和 Docker 新建的容器用不到旧容器留下的匿名卷一样
+    func removeAnonymousVolumes(except used: Set<String>) {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.appending(path: "volumes").path)) ?? []
+        for file in files where file.hasPrefix(ComposeProject.anonymousVolumePrefix) && file.hasSuffix(".ext4") {
+            let name = String(file.dropLast(".ext4".count))
+            guard !used.contains(name) else { continue }
+            try? FileManager.default.removeItem(at: directory.appending(path: Self.volumePath(name)))
+            forgetPopulated(name)
+        }
     }
 
     // 命名卷带上镜像内容。Docker 是建容器时看一次：卷是空的、镜像里有这个目录就复制。

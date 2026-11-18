@@ -26,6 +26,7 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 - 程序从环境变量读服务的地址和端口，不给默认端口；没设就报错退出。启动脚本、测试脚本从 `npx napbox up` 或 `npx napbox env` 的 JSON 里取地址，传给程序。
 - 建库、建角色、跑迁移写成一次性服务，见下面「服务启动前要先建库」。
 - 脚本里不调 `docker`，也不调苹果的 `container` 这类别的容器工具：要用完就扔的库用 `npx napbox up --temp`，要单独跑一次某个服务用 `npx napbox run`。README 里写这些命令，不写 `docker compose`。
+- 测试用的一次性数据库，数据也放命名卷，和开发库一样，不用 `tmpfs` 内存盘：临时环境的卷随环境一起删；命名卷是标准的 ext4，速度和内存盘相近；内存盘里的数据算环境的内存，库大了会把别的服务挤掉。
 - 只用 napbox 支持的写法：不写 `read_only`、`cpus`、`pids_limit`、`security_opt`、`platform`；镜像和 Dockerfile 的 `FROM` 用公开仓库能拉到的。自己写的 compose 报 `compose_unsupported` 时，按错误信息改掉。
 
 ## 网页页面测试（端到端、截图对比）

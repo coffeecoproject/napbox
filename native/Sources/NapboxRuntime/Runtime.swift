@@ -16,6 +16,8 @@ public actor Runtime {
     let storage: Storage
     /// 网络小容器的程序（Linux 版 napbox-guard）。直接写进一个根文件系统，不用镜像
     let guardBinary: URL
+    /// 建数据卷、构建缓存用的 e2fsprogs
+    let disk: DataDisk
     let builder: ImageBuilder
     /// 正在做或已经做完的那次准备。同时进来的都等它：各做各的会互相删掉对方刚建的 init.block
     private var preparing: Task<(store: ImageStore, vmm: VZVirtualMachineManager), Error>?
@@ -32,11 +34,14 @@ public actor Runtime {
         return kernel
     }
 
-    public init(supportDirectory: URL, guardBinary: URL) {
+    /// - programs：napboxd 所在的目录。scripts/build-native.sh 把 Linux 版 napbox-guard 和 macOS 版 mke2fs、debugfs、
+    ///   mke2fs.conf 一起编译好放在那里
+    public init(supportDirectory: URL, programs: URL) {
         self.supportDirectory = supportDirectory
         storage = Storage(root: supportDirectory)
-        self.guardBinary = guardBinary
-        builder = ImageBuilder(directory: supportDirectory.appending(path: "builder"), guardBinary: guardBinary)
+        guardBinary = programs.appending(path: "napbox-guard")
+        disk = DataDisk(programs: programs)
+        builder = ImageBuilder(directory: supportDirectory.appending(path: "builder"), guardBinary: guardBinary, disk: disk)
     }
 
     static func openImageStore(supportDirectory: URL) throws -> ImageStore {
@@ -61,6 +66,9 @@ public actor Runtime {
     private func prepareOnce() async throws(NapboxError) -> (store: ImageStore, vmm: VZVirtualMachineManager) {
         guard FileManager.default.fileExists(atPath: guardBinary.path) else {
             throw NapboxError(.runtimeUnavailable, "没有网络小容器的程序 \(guardBinary.path)：它和 napboxd 在同一目录，由 scripts/build-native.sh 一起编译。")
+        }
+        if let missing = disk.missing.first {
+            throw NapboxError(.runtimeUnavailable, "没有建数据卷用的 \(missing.path)：它和 napboxd 在同一目录，由 scripts/build-native.sh 一起编译。")
         }
         let kernel = supportDirectory.appending(path: "kernel/vmlinux")
         guard FileManager.default.fileExists(atPath: kernel.path) else {
@@ -199,12 +207,23 @@ public actor Runtime {
     /// - trace：记下每个服务用的镜像、启动和就绪的时间，失败时也留着走到的部分（运行记录用）
     /// - foreground：napbox run 在前台跑的那个服务，接上它的标准输入和输出，不等它就绪
     /// - progress：虚拟机建好了、哪个服务就绪了随时告诉它（唤醒时连接等自己的服务就绪用）
-    public func start(_ record: EnvironmentRecord, project: ComposeProject, skipping: Set<String>,
+    public func start(_ record: EnvironmentRecord, project composeProject: ComposeProject, skipping: Set<String>,
                       foreground: ForegroundService? = nil, trace: RunTrace,
                       progress: StartProgress) async throws(NapboxError) -> RunningEnvironment {
         let (store, vmm) = try await prepare()
+        // 镜像声明了 VOLUME、compose 没在那个路径挂东西的，和 Docker 一样各给一块匿名卷（ImageVolumes.swift）：
+        // 先拿到各服务的镜像，把匿名卷加进来，下面都按加好的这份起。不再用的匿名卷（镜像不声明了、服务删了）删掉
+        var images: [String: Containerization.Image] = [:]
+        var declared: [String: [String]] = [:]
+        for s in composeProject.services {
+            let image = try await Images.forStart(s, project: composeProject, environment: record.id, store: store)
+            images[s.name] = image
+            declared[s.name] = try await Images.declaredVolumes(image)
+        }
+        let project = composeProject.withImageVolumes(declared)
         guard let ip = record.ip else { throw NapboxError(.internalError, "环境 \(record.name) 没有分配 IP") }
         let layout = try EnvironmentLayout(directory: storage.environmentDirectory(record))
+        layout.removeAnonymousVolumes(except: Set(project.volumes))
         let addresses = try ServiceNetwork.addresses(project.services.map(\.name))
         let portVariables = PortVariables.variables(record.ports.filter { project.service($0.service)?.ports.contains($0.containerPort) == true })
         let shares = HostShares(record.hostAccess)
@@ -215,7 +234,7 @@ public actor Runtime {
         let pod: LinuxPod
         do throws(NapboxError) {
             for s in project.services {
-                let image = try await Images.forStart(s, project: project, environment: record.id, store: store)
+                guard let image = images[s.name] else { throw NapboxError(.internalError, "\(s.name) 的镜像没有准备") }
                 trace.image(s.name, reference: image.reference, digest: image.digest, platformDigest: try await Images.platformDigest(image))
                 containers.append(try await ContainerPlan(
                     service: s, image: image, layout: layout, portVariables: portVariables, freshRootfs: &freshRootfs, trace: trace,
@@ -259,7 +278,7 @@ public actor Runtime {
         var hosts = Hosts.default
         hosts.entries += addresses.sorted { $0.key < $1.key }.map { .init(ipAddress: $0.value, hostnames: [$0.key]) }
         let volumes = try project.volumes.map { name throws(NapboxError) in
-            LinuxPod.PodVolume(name: name, source: .diskImage(path: try layout.volume(name), readOnly: false), format: "ext4")
+            LinuxPod.PodVolume(name: name, source: .diskImage(path: try layout.volume(name, disk: disk), readOnly: false), format: "ext4")
         }
         // 虚拟机的内存是各服务那一份加起来，用多少才向 macOS 要多少；核数和本机一样，空着的核不占资源
         let resources = VMResources(cpus: ProcessInfo.processInfo.activeProcessorCount,

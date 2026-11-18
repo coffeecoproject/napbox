@@ -55,10 +55,10 @@ actor Daemon {
 
     /// 读状态文件，把登记过的端口重新锁上。锁不上的（napboxd 没运行期间被别的程序占了）记进日志，
     /// 那个环境下次起的时候再试，还占着就报错说明。
-    /// - guardBinary：网络小容器的程序 napbox-guard（和 napboxd 放在同一目录）
-    init(supportDirectory: URL, guardBinary: URL) throws(NapboxError) {
+    /// - programs：napboxd 所在的目录，napbox-guard 和建盘的 mke2fs 这些和它放在一起
+    init(supportDirectory: URL, programs: URL) throws(NapboxError) {
         store = try StateStore(url: supportDirectory.appending(path: "state.json"))
-        runtime = Runtime(supportDirectory: supportDirectory, guardBinary: guardBinary)
+        runtime = Runtime(supportDirectory: supportDirectory, programs: programs)
         for env in store.state.environments {
             for a in env.ports where !locks.lock(a.hostPort) {
                 print("环境 \(env.name) 的 \(a.service):\(a.containerPort) 登记的端口 \(a.hostPort) 被别的程序占着，没锁上")

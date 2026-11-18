@@ -2,7 +2,7 @@
 // 假的 npm registry 提供 .pack 里的包 → 插件的启动脚本安装它 → setup 工具（下载内核、注册 launchd）→ 起真实的虚拟机。
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { createHash } from "node:crypto";
 import { homedir, tmpdir } from "node:os";
@@ -150,6 +150,8 @@ test("插件的启动脚本从 registry 安装固定版本，启动 MCP 服务",
   const installed = path.join(home, "Library/Caches/napbox/versions", version, "node_modules/napbox");
   assert.ok(existsSync(path.join(installed, "dist/cli.js")));
   assert.ok(existsSync(path.join(installed, "native/napboxd")));
+  // mke2fs、debugfs 是 GPLv2：包里带着编译它们的源码
+  assert.ok(readdirSync(path.join(installed, "third-party")).some((name) => /^e2fsprogs-[\d.]+\.tar\.gz$/.test(name)));
   assert.ok(existsSync(path.join(installed, "node_modules/zod")) || existsSync(path.join(installed, "../zod")));
   // 包里的 napboxd 签名和权限还在：npm 打包、解开后不能丢
   const signature = spawnSync("codesign", ["-d", "--entitlements", "-", path.join(installed, "native/napboxd")], { encoding: "utf8" });
@@ -172,7 +174,9 @@ test("setup 工具：下载内核和 runc、拉 vminit、注册 launchd 并启�
   const daemon = path.join(support, "daemon", version, "napboxd");
   const command = execFileSync("ps", ["-o", "command=", "-p", String(value.pid)], { encoding: "utf8" });
   assert.equal(command.trim(), daemon);
-  assert.ok(existsSync(path.join(support, "daemon", version, "napbox-guard")));
+  for (const name of ["napbox-guard", "mke2fs", "debugfs", "mke2fs.conf"]) {
+    assert.ok(existsSync(path.join(support, "daemon", version, name)), name);
+  }
   // 内核是非 debug 版，vmlinux 指向它
   assert.equal(execFileSync("readlink", [path.join(support, "kernel/vmlinux")], { encoding: "utf8" }).trim(), "vmlinux-6.18.35-197");
   const kernel = readFileSync(path.join(support, "kernel/vmlinux"));

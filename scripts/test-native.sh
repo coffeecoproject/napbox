@@ -4,11 +4,11 @@
 # 用法：scripts/test-native.sh（会先编译 debug 版）
 set -uo pipefail
 source "$(dirname "$0")/lib.sh"
-echo "单元测试"
-# 按 swift test 的退出码判断：没编译过、一个测试都没跑起来也算失败
-unit="$(swift test --package-path "$root/native" 2>&1)" || { tail -40 <<<"$unit"; echo "单元测试失败"; exit 1; }
-echo "  $(grep -o 'Test run with .*' <<<"$unit" | tail -1)"
 build_native
+echo "单元测试"
+# 按 swift test 的退出码判断：没编译过、一个测试都没跑起来也算失败。建盘的测试要用编译好的 mke2fs、debugfs
+unit="$(NAPBOX_TEST_PROGRAMS="$bin" swift test --package-path "$root/native" 2>&1)" || { tail -40 <<<"$unit"; echo "单元测试失败"; exit 1; }
+echo "  $(grep -o 'Test run with .*' <<<"$unit" | tail -1)"
 
 work="$(mktemp -d -t napbox-test)"
 export NAPBOX_SUPPORT_DIR="$work/support"

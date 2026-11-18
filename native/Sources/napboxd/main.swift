@@ -54,12 +54,12 @@ guard flock(lockFD, LOCK_EX | LOCK_NB) == 0 else {
     fail("锁不住 \(Paths.lock.path)：\(String(cString: strerror(errno)))")
 }
 
-// 网络小容器的程序是 Linux 版的 napbox-guard，和 napboxd 放在同一目录（scripts/build-native.sh 一起编译）
+// 网络小容器的程序 napbox-guard、建盘的 mke2fs 这些和 napboxd 放在同一目录（scripts/build-native.sh 一起编译）
 guard let executable = Bundle.main.executableURL else { fail("找不到 napboxd 自己的路径") }
-let guardBinary = executable.resolvingSymlinksInPath().deletingLastPathComponent().appending(path: "napbox-guard")
+let programs = executable.resolvingSymlinksInPath().deletingLastPathComponent()
 let daemon: Daemon
 do {
-    daemon = try Daemon(supportDirectory: Paths.supportDirectory, guardBinary: guardBinary)
+    daemon = try Daemon(supportDirectory: Paths.supportDirectory, programs: programs)
 } catch {
     fail(error.message)
 }

@@ -1,4 +1,5 @@
-// 打 npm 包到 .pack/napbox-<版本>.tgz：编译好的 Swift 和 Go 程序（release）、编译成 JS 的 TypeScript、发布用的 package.json。
+// 打 npm 包到 .pack/napbox-<版本>.tgz：编译好的 Swift 和 Go 程序（release）、建盘用的 e2fsprogs 程序和它的源码包、
+// 编译成 JS 的 TypeScript、发布用的 package.json。
 //
 // 用法：node scripts/pack.ts
 import { execFile as execFileCallback } from "node:child_process";
@@ -29,10 +30,19 @@ const { stdout } = await execFile(path.join(root, "scripts/build-native.sh"), ["
   maxBuffer: 1 << 26,
 });
 const products = stdout.trim().split("\n").at(-1) as string;
-for (const name of ["napbox", "napboxd", "napbox-guard"]) {
+for (const name of ["napbox", "napboxd", "napbox-guard", "mke2fs", "debugfs"]) {
   await copyFile(path.join(products, name), path.join(target, "native", name));
   await chmod(path.join(target, "native", name), 0o755);
 }
+await copyFile(path.join(products, "mke2fs.conf"), path.join(target, "native", "mke2fs.conf"));
+// mke2fs、debugfs 是 GPLv2：编译它们用的源码包原样放进包里（scripts/build-native.sh 下载并校验过 sha256）
+const buildScript = await readFile(path.join(root, "scripts/build-native.sh"), "utf8");
+const e2fsprogsVersion = /^e2fsprogs_version=(\S+)$/m.exec(buildScript)?.[1];
+if (!e2fsprogsVersion) throw new Error("scripts/build-native.sh 里找不到 e2fsprogs_version");
+const e2fsprogs = path.join(root, "native/.build", `e2fsprogs-${e2fsprogsVersion}`);
+const e2fsprogsSource = `e2fsprogs-${e2fsprogsVersion}.tar.gz`;
+await mkdir(path.join(target, "third-party"), { recursive: true });
+await copyFile(path.join(e2fsprogs, e2fsprogsSource), path.join(target, "third-party", e2fsprogsSource));
 
 for (const name of ["LICENSE", "NOTICE", "README.md", "README.zh-CN.md"]) {
   await copyFile(path.join(root, name), path.join(target, name));
@@ -61,7 +71,7 @@ await writeFile(
       type: "module",
       bin: { napbox: "dist/cli.js" },
       exports: { ".": { types: "./dist/index.d.ts", default: "./dist/index.js" } },
-      files: ["dist", "native", "NOTICE", "THIRD_PARTY_NOTICES.txt", "README.zh-CN.md"],
+      files: ["dist", "native", "third-party", "NOTICE", "THIRD_PARTY_NOTICES.txt", "README.zh-CN.md"],
       license: source.license,
       engines: source.engines,
       os: ["darwin"],
@@ -78,7 +88,8 @@ await writeFile(
 const packed = await execFile("npm", ["pack", "--pack-destination", out], { cwd: target });
 process.stdout.write(`${path.join(out, packed.stdout.trim().split("\n").at(-1) as string)}\n`);
 
-/** 打进包里的第三方代码的许可证和 NOTICE：Swift 包按 Package.resolved，napbox-guard 按实际链接的 Go 模块，再加 Go 标准库 */
+/** 打进包里的第三方代码的许可证和 NOTICE：Swift 包按 Package.resolved，napbox-guard 按实际链接的 Go 模块，再加 Go 标准库，
+ * 和 e2fsprogs（NOTICE 里是 GPLv2 全文，libuuid 另有 COPYING） */
 async function thirdPartyNotices(): Promise<string> {
   const sections: string[] = [];
   const rule = "=".repeat(78);
@@ -115,5 +126,10 @@ async function thirdPartyNotices(): Promise<string> {
   // Homebrew 装的 Go 把 LICENSE 放在 GOROOT 的上一层（PATENTS 还在 GOROOT 里）
   const goLicense = existsSync(path.join(goroot as string, "LICENSE")) ? [] : [path.dirname(goroot as string)];
   await add(`Go standard library (${goVersion})`, goroot as string, ...goLicense);
+  await add(
+    `e2fsprogs ${e2fsprogsVersion}: native/mke2fs, native/debugfs, native/mke2fs.conf (complete source: third-party/${e2fsprogsSource})`,
+    path.join(e2fsprogs, "src"),
+    path.join(e2fsprogs, "src/lib/uuid"),
+  );
   return `Licenses and notices of the third-party software compiled into the programs in native/.\n\n${sections.join("\n")}`;
 }

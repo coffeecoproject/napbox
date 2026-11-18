@@ -10,7 +10,7 @@ export const packageVersion: string = JSON.parse(
   readFileSync(path.join(packageRoot, "package.json"), "utf8"),
 ).version;
 
-/** 编译好的 napbox、napboxd、napbox-guard。发布的包在 native/ 下；仓库里没有，要用 NAPBOX_BIN 指向编译产物 */
+/** 编译好的 napbox、napboxd、napbox-guard 和 e2fsprogs 的 mke2fs、debugfs。发布的包在 native/ 下；仓库里没有，要用 NAPBOX_BIN 指向编译产物 */
 export const nativeDirectory = (): string =>
   process.env.NAPBOX_BIN || path.join(packageRoot, "native");
 
