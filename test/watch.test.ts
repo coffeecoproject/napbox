@@ -201,7 +201,7 @@ describe("文件变化通知", { concurrency: false }, () => {
     writeFileSync(path.join(src, "a.tmp"), "atomic\n");
     renameSync(path.join(src, "a.tmp"), path.join(src, "a.txt"));
     const event = await waitEvent(from, "a.txt 变成新内容", (e) => e.path === "/src/a.txt" && e.content === "atomic\n");
-    assert.notEqual(event.event, "unlink");
+    assert.ok(event.event === "add" || event.event === "change", event.event);
   });
 
   test("新建文件", async () => {

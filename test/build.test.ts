@@ -148,6 +148,15 @@ after(() => {
   }
 });
 
+/** 用 mke2fs 建的标准 ext4（DataDisk）：有目录索引和元数据校验。框架的 EXT4.Formatter 建的两样都没有 */
+function assertStandardExt4(file: string): void {
+  const debugfs = path.join(process.env.NAPBOX_BIN ?? "", "debugfs");
+  const stats = execFileSync(debugfs, ["-R", "stats", file], { stdio: ["ignore", "pipe", "ignore"] }).toString();
+  const features = stats.match(/^Filesystem features:\s*(.*)$/m)?.[1]?.split(/\s+/) ?? [];
+  assert.ok(features.includes("dir_index"), `${file}：${features.join(" ")}`);
+  assert.ok(features.includes("metadata_csum"), `${file}：${features.join(" ")}`);
+}
+
 describe("镜像构建", { concurrency: false }, () => {
   let daemon: Daemon;
   let client: NapboxClient;
@@ -202,6 +211,10 @@ describe("镜像构建", { concurrency: false }, () => {
     // build 定义相同只构建一次，worker 没有写 build，也没有自己的构建日志
     assert.equal(existsSync(path.join(path.dirname(buildLog("app")), "worker.log")), false);
     assert.equal(builderRunning(), false, "构建完虚拟机就关了");
+  });
+
+  test("构建缓存卷是标准格式的 ext4：有目录索引（dir_index）", () => {
+    assertStandardExt4(path.join(support, "builder/cache.ext4"));
   });
 
   test("镜像已有时再 up 不重新构建，打进镜像的还是旧内容（和 Docker 一样）", async () => {
@@ -568,14 +581,8 @@ volumes:
   });
 
   test("匿名卷也是标准格式的 ext4：有目录索引（dir_index）", () => {
-    const debugfs = path.join(process.env.NAPBOX_BIN ?? "", "debugfs");
     assert.equal(keeperVolumes().length, 2);
-    for (const file of keeperVolumes()) {
-      const stats = execFileSync(debugfs, ["-R", "stats", file], { stdio: ["ignore", "pipe", "ignore"] }).toString();
-      const features = stats.match(/^Filesystem features:\s*(.*)$/m)?.[1]?.split(/\s+/) ?? [];
-      assert.ok(features.includes("dir_index"), `${file}：${features.join(" ")}`);
-      assert.ok(features.includes("metadata_csum"), `${file}：${features.join(" ")}`);
-    }
+    for (const file of keeperVolumes()) assertStandardExt4(file);
   });
 
   test("写进匿名卷的数据：休眠唤醒、根文件系统重建后都还在", async () => {
