@@ -30,9 +30,10 @@ extension Daemon {
     /// 移数据失败时去掉记号，环境还是完整登记着的休眠状态，有连接进来照样唤醒，下次再回收。
     /// napboxd 在中间被杀时，下次启动由 finishPendingOperations 接着做完。
     /// discardData：调用方要求不保留数据，移走后马上删；删失败时结果里的 keptDataAt 写明数据还在哪（7 天后删）。
+    /// 数据马上就删的（临时环境、discardData）直接关虚拟机，不等服务收尾：数据保留 7 天的才要正常停下、存好盘。
     func recycle(_ record: EnvironmentRecord, reason: String, discardData: Bool = false) async throws(NapboxError) -> DownResult {
         if shuttingDown { throw Self.exiting }
-        await stopRunning(record.name, snapshot: false)
+        await stopRunning(record.name, snapshot: false, discarding: record.temporary != nil || discardData)
         try setPending(record.name, .recycle(reason: reason, discardData: discardData))
         return try await finishRecycle(record, reason: reason, discardData: discardData)
     }

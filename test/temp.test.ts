@@ -288,6 +288,15 @@ describe("临时环境", { concurrency: false }, () => {
     assert.equal(environmentDirectories(), 2);
   });
 
+  test("down --temp 不等服务收尾：不理停止信号、stop_grace_period 很长的服务也马上停，数据反正要删", async () => {
+    const slow = repo("slow-stop", `services:\n  app:\n    image: alpine:3.20\n    command: ["sleep", "100000"]\n    stop_grace_period: 60s\n`);
+    await client.up({ cwd: slow, environment: {}, temp: "s1" });
+    const started = Date.now();
+    await client.down({ cwd: slow, temp: "s1" });
+    const took = Date.now() - started;
+    assert.ok(took < 20_000, `正常停要等满 60 秒，这次用了 ${took} 毫秒`);
+  });
+
   test("起不来：报错，不留下登记和数据（普通环境会留着等修好再起）", async () => {
     const broken = repo("broken", `services:\n${SICK}`);
     await rejectsWithCode(client.up({ cwd: broken, environment: {}, temp: "bad" }), "healthcheck_timeout");
