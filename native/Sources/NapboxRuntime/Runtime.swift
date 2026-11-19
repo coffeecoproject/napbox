@@ -255,12 +255,21 @@ public actor Runtime {
             for plan in containers { plan.log.close() }
             throw error
         }
+        // 服务起来之前先听好：网络小容器有连接进来时要有人接
+        let hostServices: HostServices
+        do {
+            hostServices = try await HostServices.start(project.hostServices ?? [], pod: pod)
+        } catch {
+            for plan in containers { plan.log.close() }
+            try? await pod.stop()
+            throw NapboxError(.runtimeUnavailable, "x-napbox.host_services：在虚拟机上听不了 vsock：\(error)")
+        }
 
         let env = RunningEnvironment(
             pod: pod, logs: Dictionary(uniqueKeysWithValues: containers.map { ($0.name, $0.log) }),
             stopSignals: Dictionary(uniqueKeysWithValues: containers.map { ($0.name, $0.stopSignal) }),
             images: Dictionary(uniqueKeysWithValues: containers.map { ($0.name, ServiceImage(user: $0.imageConfig.user ?? "", created: $0.imageCreated)) }),
-            layout: layout, addresses: addresses
+            layout: layout, addresses: addresses, hostServices: hostServices
         )
         progress.created(env)
         do {
@@ -285,6 +294,10 @@ public actor Runtime {
         // 服务之间用服务名互相找：每个名字指到那个服务自己的地址
         var hosts = Hosts.default
         hosts.entries += addresses.sorted { $0.key < $1.key }.map { .init(ipAddress: $0.value, hostnames: [$0.key]) }
+        let hostServicePorts = project.hostServices ?? []
+        if !hostServicePorts.isEmpty {
+            hosts.entries.append(.init(ipAddress: ServiceNetwork.gateway, hostnames: [GuardContainer.hostServicesName]))
+        }
         let volumes = try project.volumes.map { name throws(NapboxError) in
             LinuxPod.PodVolume(name: name, source: .diskImage(path: try layout.volume(name, disk: disk), readOnly: false), format: "ext4")
         }
@@ -318,6 +331,7 @@ public actor Runtime {
             }
             try await pod.addContainer(GuardContainer.name, rootfs: guardRootfs) { c in
                 c.process.arguments = [GuardContainer.program]
+                c.process.environmentVariables += GuardContainer.hostServicesEnvironment(hostServicePorts)
                 // 它自己要在 vsock 上听 napboxd，重新挂文件时还要进服务的挂载命名空间：不带白名单
                 c.seccompProfile = .unconfined
                 c.mounts = LinuxContainer.defaultMounts() + sourceMounts + GuardContainer.populateMounts(project) + [GuardContainer.vmProcMount, GuardContainer.vmCgroupMount]

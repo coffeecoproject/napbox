@@ -68,6 +68,8 @@ public actor RunningEnvironment {
     /// 当前的出网模式，和 open 模式下挡住的宿主机地址
     private var egress: EgressMode = .open
     private var blockedHostAddresses: [String] = []
+    /// 连本机程序的本机这一头（x-napbox.host_services）：跟着出网模式放行，停的时候关掉
+    private let hostServices: HostServices
     /// 把宿主机挂载目录的变化转给虚拟机
     private var sourceStream: SourceEventStream?
     private var sourceForwarder: SourceEventForwarder?
@@ -100,8 +102,9 @@ public actor RunningEnvironment {
     static let vmCheckNanoseconds: UInt64 = 500_000_000
 
     init(pod: LinuxPod, logs: [String: LogFile], stopSignals: [String: Signal], images: [String: ServiceImage],
-         layout: EnvironmentLayout, addresses: [String: String]) {
+         layout: EnvironmentLayout, addresses: [String: String], hostServices: HostServices) {
         self.pod = pod
+        self.hostServices = hostServices
         self.logs = logs
         self.stopSignals = stopSignals
         self.images = images
@@ -153,6 +156,7 @@ public actor RunningEnvironment {
         vmWatcher?.cancel()
         sourceStream?.stop()
         await sourceForwarder?.close()
+        hostServices.close()
         let id = pod.id, vm = vm
         let limit = stopTimeLimit
         var outcome = StopOutcome()
@@ -792,6 +796,7 @@ public actor RunningEnvironment {
         }
         egress = mode
         blockedHostAddresses = hosts
+        hostServices.setAllowed(mode == .open)
     }
 
     /// 宿主机的地址可能变了（换网络、重启 Clash、连 VPN）：open 模式下要单独挡的地址变了就重新加规则。

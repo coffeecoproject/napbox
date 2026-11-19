@@ -22,6 +22,10 @@ public struct ComposeProject: Codable, Equatable, Sendable {
     /// x-napbox.seed：worktree 的开发环境第一次创建时，从主目录环境最新的快照复制过来的命名卷，按名字排好序。
     /// 声明了的环境每次正常停下时也给这些卷拍快照，给别的 worktree 用。没写是 nil；napbox run 不留
     public var seed: [String]? = nil
+    /// x-napbox.host_services：环境里的服务能连的本机端口（本机 127.0.0.1 上的程序，比如模型反代），按大小排好序。
+    /// 服务连 host.docker.internal:<端口>，由 napboxd 在本机替它连过去（HostServices），出网模式是 none 时不放行。
+    /// 别的本机端口、局域网照样连不到。没写是 nil；confine 的环境不能写
+    public var hostServices: [Int]? = nil
 
     public func service(_ name: String) -> Service? { services.first { $0.name == name } }
 

@@ -19,6 +19,16 @@ enum GuardContainer {
     /// confine 的环境：代码目录本身挂在它这里，虚拟机才共享它（HostShares.root）。它自己不用
     static let confinedRoot = "/napbox-confined"
 
+    /// 服务连本机程序用的名字，和 Docker Desktop 的一样（x-napbox.host_services，HostServices）。指到网桥地址，
+    /// 它在那里听点了名的端口（guard/hostservices.go）
+    static let hostServicesName = "host.docker.internal"
+
+    /// 告诉它听哪些端口、听在哪个地址（guard/hostservices.go）。没点名时不给，它就不听
+    static func hostServicesEnvironment(_ ports: [Int]) -> [String] {
+        ports.isEmpty ? [] : ["NAPBOX_HOST_SERVICES=\(ports.map(String.init).joined(separator: " "))",
+                              "NAPBOX_HOST_ADDRESS=\(ServiceNetwork.gateway)"]
+    }
+
     /// 环境里的源码挂载在它这边怎么放：它也挂一份，通知才发得到（同一个目录在虚拟机里是同一份文件）。
     /// 服务挂单个文件时它挂这个文件所在的目录：虚拟机只能共享目录，服务那边也是共享这个目录再绑定其中的文件
     /// （Containerization 的 FileMount），从这个目录进去碰到的才是同一份文件。
