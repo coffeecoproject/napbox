@@ -72,7 +72,7 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 - **环境里的服务要用本机上的程序**（比如本机 `127.0.0.1` 上的模型反代）：不要让那个程序改成监听 `0.0.0.0`，也不要把本机的登录凭据挂进环境。在 compose 顶层写 `x-napbox: {host_services: [8317]}`（列本机端口号），服务连 `host.docker.internal:8317`（和 Docker Desktop 同名），napboxd 在本机替它连 `127.0.0.1:8317`；本机别的端口、局域网照样连不到。列了的程序这个环境里任何代码都能用，所以只列真要的，先和用户确认；出网模式 `none` 时连它会被拒绝；confine 的环境不能列。端口因人而异时写成变量：`host_services: ["${CODEX_PROXY_PORT:-8317}"]`。程序要的密钥不写进 compose，也不靠调用方的环境变量（用工具 `up`、自动唤醒时带不进去）：服务用 `env_file: [{path: ./本地文件.env, required: false}]` 读一个不进 git 的文件，缺了照样能起。新 worktree 里的这份文件由开 worktree 的工具带过去（比如 Claude Code 的 `.worktreeinclude`），不要写在启动脚本里拷。
 - **compose 文件不在默认位置**：给 `up` 传 `files`，或者在 worktree 根目录写 `.napbox.yaml`，内容是 `compose: server/compose.yaml`。
 - **改了 compose**：再调一次 `up`，会按新定义重建。
-- **改了 Dockerfile 或打进镜像的文件**：给 `up` 传 `build: true`，和 `docker compose up --build` 一样。不传时只在镜像还没有时构建。源码挂载进容器的文件不用重新构建。
+- **改了 Dockerfile 或打进镜像的文件**：给 `up` 传 `build: true`，和 `docker compose up --build` 一样。不传时只在镜像还没有时构建。新起的临时环境 `up` 时会自己构建，不用另外先构建一遍：构建出的镜像只归这个环境，`down` 时一起删。源码挂载进容器的文件不用重新构建。
 - **compose 写了 `develop.watch`**：`up` 后就生效，不用 `docker compose watch`。改文件自动同步、重建、重启，休眠期间改的唤醒时补上。觉得没同步时看 `status` 的 `watchError`。
 - **`image_build_failed`**：错误信息里有构建输出的最后几十行和完整日志的路径。修好 Dockerfile 后传 `build: true` 再调 `up`。失败不影响已经在跑的环境。
 - **服务启动前要先建库、建角色、跑迁移**：写成一次性服务（`restart: "no"`，做完就退出），后端用 `depends_on` 的 `condition: service_completed_successfully` 等它跑完。不要让后端连不上就退出、靠 `restart` 重试：napbox 里一个服务按 `restart` 重启，整个环境连数据库一起重启，会一直重来。数据库的 `healthcheck` 要走 TCP（比如 `pg_isready -h 127.0.0.1`），postgres 第一次初始化时只开本地 socket 的临时服务也会让 socket 检查通过。
