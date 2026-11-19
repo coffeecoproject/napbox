@@ -1,6 +1,6 @@
 {
   "name": "napbox",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "description": "Local dev environments for coding agents on Apple silicon Macs, without Docker: an isolated set of compose services for every git worktree.",
   "license": "FSL-1.1-ALv2",
