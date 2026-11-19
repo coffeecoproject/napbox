@@ -34,6 +34,7 @@ napbox 按项目的 compose 文件给每个 worktree 起一套隔离的服务。
 被测的服务、网页和浏览器都放进 napbox 的环境，本机只跑测试运行器（Playwright）。不用本机装的 Chrome，也不用别的容器工具起浏览器。
 
 - **被测的那一套和线上一样组装**：入口代理、构建好的前后端都写成 compose 服务，页面测试连这一套，不连开发服务器。
+- **构建好的前后端在 Dockerfile 里构建**（多阶段的 `target`），compose 用 `build:` 打进镜像。不要在本机编译好再把 `dist` 挂进去：本机的 `dist` 是这个目录里单元测试、类型检查和别的 worker 共用的，会一边写一边被读；打进镜像的每个环境各一份，`down` 时一起删，没改过的步骤用缓存，几秒就好。构建上下文用 `.dockerignore` 排除 `node_modules`、`dist` 和本机的运行状态文件。
 - **每个 worker 一套临时环境**：测试脚本按 worker 数起 `npx napbox up --temp e2e-<编号>`，跑完 `npx napbox down --temp e2e-<编号>`。各套有自己的数据库，并行互不干扰。
 - **浏览器是环境里的一个服务**，跑 Playwright 自带的 `run-server`，用的是项目自己装好的 Playwright（把仓库目录只读挂进去，pnpm 的软链接、monorepo 子目录里的依赖都能解析）。写在单独一个 compose 文件里（比如 `e2e/browser.compose.yaml`），起页面测试的环境时和被测的那份一起传给 `up`（`--file` 给两次，按顺序合并）；没有被测环境的场合（比如往开发环境里录数据）也能单独起一套只有浏览器的：
 
