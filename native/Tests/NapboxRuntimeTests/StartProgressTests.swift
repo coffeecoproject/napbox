@@ -117,9 +117,10 @@ private func withEnvironment(_ body: (RunningEnvironment) async throws -> Void) 
     }
     let directory = FileManager.default.temporaryDirectory.appending(path: "napbox-test-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
+    let pod = try LinuxPod("napbox-test", vmm: NoVirtualMachines()) { _ in }
     let env = RunningEnvironment(
-        pod: try LinuxPod("napbox-test", vmm: NoVirtualMachines()) { _ in }, logs: [:], stopSignals: [:], images: [:],
-        layout: try EnvironmentLayout(directory: directory), addresses: [:]
+        pod: pod, logs: [:], stopSignals: [:], images: [:],
+        layout: try EnvironmentLayout(directory: directory), addresses: [:], hostServices: try await HostServices.start([], pod: pod)
     )
     try await body(env)
 }

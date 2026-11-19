@@ -458,6 +458,32 @@ extension [ComposeIssue] {
         #expect(try issues(["compose.yaml": "x-napbox: {host_ports: {a: 1}}\nservices:\n  a: {image: alpine}\n"]).mentions("x-napbox.host_ports：要是列表"))
     }
 
+    /// x-napbox.host_services：本机端口按大小排好；不是端口号、重复的报错；run 也留着（跑的服务一样要连）；没写的定义和原来一样
+    @Test func hostServices() throws {
+        let files = ["compose.yaml": """
+        x-napbox:
+          host_services: [9000, "${PROXY_PORT:-8317}"]
+        services:
+          a: {image: alpine}
+        """]
+        #expect(try load(files).hostServices == [8317, 9000])
+        #expect(try load(files, run: ComposeRun(service: "a")).hostServices == [8317, 9000])
+        #expect(try load(["compose.yaml": "services:\n  a: {image: alpine}\n"]).hostServices == nil)
+
+        let found = try issues(["compose.yaml": """
+        x-napbox:
+          host_services: [8317, 8317, 0, 70000, web]
+        services:
+          a: {image: alpine}
+        """])
+        #expect(found.count == 4)
+        #expect(found.mentions("x-napbox.host_services.8317：重复了"))
+        #expect(found.mentions("x-napbox.host_services.0"))
+        #expect(found.mentions("x-napbox.host_services.70000"))
+        #expect(found.mentions("x-napbox.host_services.web"))
+        #expect(try issues(["compose.yaml": "x-napbox: {host_services: {a: 1}}\nservices:\n  a: {image: alpine}\n"]).mentions("x-napbox.host_services：要是列表"))
+    }
+
     /// x-napbox.seed：只能列顶层声明的命名卷，按名字排序；不认识、重复的报错；run 不留；没写的定义和原来一样
     @Test func seed() throws {
         let files = ["compose.yaml": """

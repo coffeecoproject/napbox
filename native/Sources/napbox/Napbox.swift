@@ -246,7 +246,7 @@ struct Sleep: ParsableCommand {
 extension EgressMode: ExpressibleByArgument {}
 
 struct Egress: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "切换当前 worktree 环境的出网模式：open 能上外网，none 只能访问同一环境里的服务；两种都访问不到宿主机和局域网。在运行的马上生效，休眠的下次唤醒生效。")
+    static let configuration = CommandConfiguration(abstract: "切换当前 worktree 环境的出网模式：open 能上外网，none 只能访问同一环境里的服务；两种都访问不到宿主机和局域网，只有 open 时能连 x-napbox.host_services 列出的本机端口。在运行的马上生效，休眠的下次唤醒生效。")
 
     @Argument(help: "open 或 none")
     var mode: EgressMode

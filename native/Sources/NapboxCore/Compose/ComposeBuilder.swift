@@ -36,6 +36,7 @@ struct ComposeBuilder {
         var idleMinutes: Int?
         var hostPorts: [String] = []
         var seed: [String] = []
+        var hostServices: [Int] = []
         for (key, value) in top {
             switch key {
             case "services", "name": break // name：napbox 自己给环境命名
@@ -70,7 +71,8 @@ struct ComposeBuilder {
                     if k == "idle_minutes", let s = v.string, let n = Int(s), n > 0 { idleMinutes = n }
                     else if k == "host_ports" { hostPorts = hostPortNames(v) }
                     else if k == "seed" { seed = strings(v, "x-napbox.seed") }
-                    else { issues.append(.unsupported("x-napbox.\(k)：不认识的设置或值（顶层只有 idle_minutes，正整数；host_ports，名字列表；seed，命名卷列表）")) }
+                    else if k == "host_services" { hostServices = hostServicePorts(v) }
+                    else { issues.append(.unsupported("x-napbox.\(k)：不认识的设置或值（顶层只有 idle_minutes，正整数；host_ports，名字列表；seed，命名卷列表；host_services，本机端口列表）")) }
                 }
             case "secrets":
                 for (name, v) in value.entries ?? [] {
@@ -156,7 +158,8 @@ struct ComposeBuilder {
             services: active.sorted { $0.name < $1.name }, volumes: volumes.sorted(), idleMinutes: idleMinutes, unsetVariables: [],
             reservedPorts: reserved.isEmpty ? nil : Dictionary(uniqueKeysWithValues: reserved.map { ($0.name, $0.ports) }),
             hostPorts: run != nil || hostPorts.isEmpty ? nil : hostPorts,
-            seed: run != nil || seed.isEmpty ? nil : Array(Set(seed)).sorted()
+            seed: run != nil || seed.isEmpty ? nil : Array(Set(seed)).sorted(),
+            hostServices: hostServices.isEmpty ? nil : hostServices.sorted()
         )
     }
 
@@ -189,6 +192,25 @@ struct ComposeBuilder {
             }
         }
         return names
+    }
+
+    /// x-napbox.host_services：本机端口号，不能重复。confine 的环境（AI 自己起的）不能写：
+    /// 不然它在 compose 里点个名就能用本机上的程序（比如带着用户账号的模型反代）
+    private mutating func hostServicePorts(_ v: YAMLTree) -> [Int] {
+        var result: [Int] = []
+        for text in strings(v, "x-napbox.host_services") {
+            let p = "x-napbox.host_services.\(text)"
+            guard let n = Int(text), (1...65535).contains(n) else {
+                issues.append(.invalid("\(p)：要是本机的端口号（1–65535）"))
+                continue
+            }
+            if result.contains(n) { issues.append(.invalid("\(p)：重复了")) } else { result.append(n) }
+        }
+        if !result.isEmpty, access.confinement != nil {
+            issues.append(.unsupported("x-napbox.host_services：限定在代码目录里的环境（confine）不能连本机的程序"))
+            return []
+        }
+        return result
     }
 
     // MARK: - 单个服务

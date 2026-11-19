@@ -167,6 +167,15 @@ private func compose(_ service: String) -> [String: String] {
         }
     }
 
+    /// confine 的环境不能连本机的程序：AI 改 compose 点个名就能用上本机带着用户账号的程序
+    @Test func hostServicesRejected() throws {
+        let box = try Sandbox(["copy/compose.yaml": "x-napbox: {host_services: [8317]}\nservices:\n  app: {image: busybox}\n"])
+        defer { box.remove() }
+        let error = box.failure()
+        #expect(error?.code == ErrorCode.composeUnsupported.rawValue)
+        #expect(error?.message.contains("x-napbox.host_services") == true, "\(error?.message ?? "没有报错")")
+    }
+
     /// 目录以内的写法都能读，存进定义的是真实路径；Dockerfile 和不受限时一样存相对 context 的写法
     @Test func insideLoads() throws {
         let box = try Sandbox([

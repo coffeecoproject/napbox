@@ -299,7 +299,7 @@ export const tools: readonly Tool[] = [
   define({
     name: "egress",
     title: "切换出网模式",
-    description: "open：服务能上外网；none：只能访问环境自己的服务。都访问不到宿主机和局域网。在运行的马上生效。",
+    description: "open：服务能上外网；none：只能访问环境自己的服务。都访问不到宿主机和局域网，只有 open 时能连 compose 里 x-napbox.host_services 列出的本机端口。在运行的马上生效。",
     input: z.strictObject({ directory, temp, mode: EgressMode }),
     annotations: WRITE,
     async run(args, context) {

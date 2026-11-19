@@ -5,6 +5,7 @@
 #   web   有端口、没有 healthcheck 的服务，等 seed 成功跑完才启动；启动时报告根文件系统是新的还是沿用的
 #   probe 连上它的端口就得到一个 shell，在环境里执行命令（测出网规则）；和 web 同一个镜像，根文件系统由同一次解包克隆
 #         出来，启动时在自己的根文件系统里留个记号（web 重建时不能从它克隆）
+# 还点名了一个本机端口（x-napbox.host_services），测出网规则时在本机 127.0.0.1 上听它
 # 在临时 git 仓库和临时 napbox 目录（NAPBOX_SUPPORT_DIR）里跑，不碰别的项目。镜像库和内核链接到
 # ~/Library/Application Support/napbox 里已有的，不重新下载。要起虚拟机，所以不放进 test-native.sh；
 # 改了 NapboxRuntime 或端口代理后手动跑。用法：scripts/test-up.sh
@@ -31,6 +32,8 @@ ln -s "$real/kernel" "$NAPBOX_SUPPORT_DIR/kernel"
 ln -s "$real/runc" "$NAPBOX_SUPPORT_DIR/runc"
 sock="$NAPBOX_SUPPORT_DIR/napboxd.sock"
 repo="$work/demo"
+# x-napbox.host_services 点名的本机端口：本机程序只听 127.0.0.1
+hostservice=$(python3 -I -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 daemon=""
 cleanup() {
     [ -n "$daemon" ] && kill -TERM "$daemon" 2>/dev/null && wait "$daemon" 2>/dev/null
@@ -87,7 +90,7 @@ reach() { in_env "nc -z -w 3 $1 $2 && echo 通 || echo 不通"; }
 sql() { PGCONNECT_TIMEOUT=5 PGPASSWORD=t psql -h 127.0.0.1 -p "$1" -U t -d t -Atc "$2" 2>&1; }
 write_compose() { # write_compose <web 的消息> [闲置几分钟休眠]
     cat >"$repo/compose.yaml" <<YAML
-x-napbox: {idle_minutes: ${2:-30}}
+x-napbox: {idle_minutes: ${2:-30}, host_services: [$hostservice]}
 services:
   db:
     image: postgres:17-alpine
@@ -207,6 +210,19 @@ for a in $hostaddrs; do
     check "open：经宿主机的地址 $a 也连不到" test "$(reach "$a" "$hostport")" = "不通"
 done
 check "open：能连外网" test "$(reach 1.1.1.1 80)" = "通"
+# 本机 127.0.0.1 上点了名的程序：每来一个连接回一行就关
+python3 -I -c '
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(8)
+while True:
+    c, _ = s.accept(); c.sendall("本机回话\n".encode()); c.close()' "$hostservice" &
+hostprog=$!
+for _ in $(seq 1 50); do nc -z 127.0.0.1 "$hostservice" 2>/dev/null && break; sleep 0.1; done
+# busybox 的 nc 读到标准输入结束就关连接：先不给结束，让它等到回话
+ask_host() { in_env "sleep 2 | nc -w 3 host.docker.internal $1"; }
+check "open：点了名的本机程序经 host.docker.internal 连得上（它只听 127.0.0.1）" test "$(ask_host "$hostservice")" = "本机回话"
+check "open：host.docker.internal 上没点名的本机端口连不到" test "$(reach host.docker.internal "$hostport")" = "不通"
 # open 和 none 用同一条命令查 DNS，open 下通就说明 none 下不通是规则挡的
 dns="nslookup one.one.one.one >/dev/null 2>&1 && echo 通 || echo 不通"
 check "open：DNS 能解析" test "$(in_env "$dns")" = "通"
@@ -221,13 +237,15 @@ check "none：切换前建立的出网连接断了，请求发出去了也收不
 check "none：连不到外网" test "$(reach 1.1.1.1 80)" = "不通"
 check "none：DNS 也不通" test "$(in_env "$dns")" = "不通"
 check "none：连不到宿主机上的服务" test "$(reach 192.168.64.1 "$hostport")" = "不通"
+check "none：点了名的本机程序也用不了" test -z "$(ask_host "$hostservice")"
 check "none：环境内服务互连照常" test "$(reach db 5432)" = "通"
 check "none：宿主机经端口代理连进来照常" grep -q " v2$" <<<"$(web_says "$web")"
 (cd "$repo" && "$napbox" sleep >/dev/null)
 switched="$(cd "$repo" && "$napbox" egress open)"
 check "休眠时切回 open：只改登记，环境还在休眠" test "$(jq -r '.state + " " + .egress' <<<"$switched")" = "sleeping open"
 check "唤醒后按 open 加规则：能连外网" test "$(reach 1.1.1.1 80)" = "通"
-kill "$hostsvc" 2>/dev/null; wait "$hostsvc" 2>/dev/null
+check "唤醒后点了名的本机程序又能用" test "$(ask_host "$hostservice")" = "本机回话"
+kill "$hostsvc" "$hostprog" 2>/dev/null; wait "$hostsvc" "$hostprog" 2>/dev/null
 
 echo "napbox sleep 和唤醒"
 # 开一个连接挂着：发 PostgreSQL 的 SSLRequest，收到回应后不关，看休眠时会不会被断开
