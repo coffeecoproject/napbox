@@ -108,9 +108,10 @@ actor ImageBuilder {
             await stopEngine()
             throw NapboxError(.runtimeUnavailable, "构建引擎启动失败：\(error)")
         }
-        // 构建跑 RUN 之前对准时钟：引擎要等几秒才就绪，在那之前对上就行
+        // 构建跑 RUN 之前对准时钟（不用进容器）。查网关要进容器，等引擎就绪后再做（见 waitForEngine）
         do {
             try await GuestClock.sync(pod)
+            try await waitForEngine(logs.engine)
             try await checkGateway(pod)
         } catch {
             await stopEngine()
@@ -309,11 +310,8 @@ actor ImageBuilder {
 
     // MARK: - 构建
 
-    /// 等引擎就绪、跑 buildctl。失败时返回错误（这时还要先停虚拟机），成功返回 nil。
+    /// 跑 buildctl（引擎已经就绪）。失败时返回错误（这时还要先停虚拟机），成功返回 nil。
     private func runBuild(_ request: Request, dockerfile: Dockerfile, in pod: LinuxPod, logs: Logs) async -> NapboxError? {
-        guard await waitForEngine(pod) else {
-            return NapboxError(.runtimeUnavailable, "构建引擎 \(Self.engineReadySeconds) 秒内没有就绪：\(logs.engine.tail(Self.errorTailLines))")
-        }
         var arguments = [
             "buildctl", "build", "--progress", "plain", "--frontend", "dockerfile.v0",
             "--local", "context=/ctx", "--local", "dockerfile=/dockerfile", "--opt", "filename=\(dockerfile.name)",
@@ -339,14 +337,24 @@ actor ImageBuilder {
         "\(log.tail(errorTailLines))\n完整输出：\(request.log.path)"
     }
 
-    private func waitForEngine(_ pod: LinuxPod) async -> Bool {
+    /// 引擎开始监听时在日志里写的一句（BuildKit 的 serveGRPC），换引擎版本时要核对还在
+    static let engineReadyMark = "running server on"
+
+    /// 等引擎就绪：在宿主机上看它的日志，不进容器查。
+    /// 引擎启动时会把自己挪进子 cgroup，再在容器这一层打开控制器（镜像设了 BUILDKIT_SETUP_CGROUPV2_ROOT=1）。
+    /// 这期间进容器执行命令，虚拟机里先读到的是挪之前的位置，等把新进程放进去时那一层已经不能直接放进程，
+    /// 内核报 EBUSY；赶在它挪之前进去的进程还会让它开不了控制器。就绪这一句在挪完之后才写，
+    /// 所以第一次进容器执行命令要等到它出现。
+    private func waitForEngine(_ log: LogFile) async throws(NapboxError) {
+        let mark = Data(Self.engineReadyMark.utf8)
         let deadline = Date().addingTimeInterval(Double(Self.engineReadySeconds))
         while Date() < deadline {
-            if stopping { return false }
-            if (try? await exec(["buildctl", "debug", "workers"], in: pod, output: CaptureWriter(), timeout: 5)) == 0 { return true }
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            if stopping { throw exiting }
+            // 启动时的日志只有十来行，整份读
+            if let written = try? Data(contentsOf: log.url), written.range(of: mark) != nil { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
         }
-        return false
+        throw NapboxError(.runtimeUnavailable, "构建引擎 \(Self.engineReadySeconds) 秒内没有就绪：\(log.tail(Self.errorTailLines))")
     }
 
     static let guardPath = "/napbox-guard"
