@@ -147,22 +147,29 @@ public actor RunningEnvironment {
     /// 卡住的请求随之失败返回，pod.stop() 也就结束了。相当于断电，靠磁盘的日志恢复（第 2 节「napboxd 被强杀后的磁盘」）。
     /// 返回怎么停下的（StopOutcome）：虚拟机还在运行、服务都在 grace 时间内退出了、数据也存了盘（sync 成功），
     /// 没有被直接关掉，才算正常停下。只有这样停下的，数据卷才是干净的，可以拍快照（x-napbox.seed）
+    /// - discarding：停完数据马上就删（临时环境销毁、调用方要求不保留数据）。不等服务收尾、不存盘，直接关掉虚拟机：
+    ///   等它们落盘没有用。返回的 StopOutcome 是空的
     @discardableResult
-    public func stop() async -> StopOutcome {
+    public func stop(discarding: Bool = false) async -> StopOutcome {
         stopping = true
         vmWatcher?.cancel()
         sourceStream?.stop()
         await sourceForwarder?.close()
         let id = pod.id, vm = vm
-        let limit = stopTimeLimit
         var outcome = StopOutcome()
-        let timedOut = await Deadline.run(seconds: limit, onTimeout: {
-            print("环境 \(id) 停了 \(Int(limit)) 秒还没停下，直接关掉虚拟机")
+        if discarding {
             try? await vm?.stop()
-        }) {
-            outcome = await stopInside()
+            try? await pod.stop()
+        } else {
+            let limit = stopTimeLimit
+            let timedOut = await Deadline.run(seconds: limit, onTimeout: {
+                print("环境 \(id) 停了 \(Int(limit)) 秒还没停下，直接关掉虚拟机")
+                try? await vm?.stop()
+            }) {
+                outcome = await stopInside()
+            }
+            if timedOut { outcome.timeLimit = limit }
         }
-        if timedOut { outcome.timeLimit = limit }
         for w in watchers { w.cancel() }
         for log in logs.values { log.close() }
         return outcome
