@@ -103,6 +103,7 @@ Not supported, among others: `read_only`, `cpus`, `pids_limit`, `security_opt`, 
 - Builds cannot use your Docker login or local Docker images: `FROM` must be pullable from a public registry.
 - napbox does not export images. Package release images with another tool, such as Apple's `container`.
 - Memory is returned to macOS only when an environment sleeps.
+- VMs use the system's shared NAT network on `192.168.64.0/24`. If another program's VM network holds that subnet, starting an environment fails with `address_unavailable` (gateway unreachable). Two usual causes: Apple's `container` without a fixed subnet (set `[network]` `subnet = "192.168.65.0/24"` in `~/.config/container/config.toml` and restart it), or a program that crashed while using a VM network and left its subnet stranded (run `sudo killall InternetSharing`, or restart the Mac).
 - There is no swap in the virtual machine. When a service stalls on memory (at its own limit, or with the whole environment's memory used up), napbox ends the process using the most memory and says why in the service's log, instead of letting it hang.
 
 ## Contributing

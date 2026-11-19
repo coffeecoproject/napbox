@@ -10,10 +10,19 @@ public enum AddressAllocator {
     static let builderHosts = 247...254
     public static let gateway = "192.168.64.1"
 
-    /// 虚拟机里 `napbox-guard gateway` 查到网关不在它的网络上时给的错误。系统把虚拟机放进了别的网段（这个网段被别的
-    /// 程序先占了），写死的地址和网关对不上，DNS 和出网都不通。
+    /// 虚拟机里 `napbox-guard gateway` 查到网关不在它的网络上时给的错误。napbox 用系统共用的 NAT 网，网段由系统定，
+    /// 默认就是这个；这个网段被别的程序的虚拟机网络（macOS 26 的 vmnet_network）占着时，系统把虚拟机放进别的网段，
+    /// 写死的地址和网关对不上，DNS 和出网都不通。占着它的常见是两种：没固定网段的苹果 container 在 napbox 之前起了网络；
+    /// 建过这种网络的程序在网上还挂着虚拟机时退出（崩溃、被强杀），系统一直留着它的网段不放（apple/container#2357）。
+    /// napbox 不自己建网就是因为后一种：napboxd 一崩溃，下次就起不了环境（2026-11-18 实测）
     public static func gatewayUnreachable(_ detail: String) -> NapboxError {
-        NapboxError(.addressUnavailable, "虚拟机连不上网关 \(gateway)（\(detail)）。\(prefix)0/24 这个网段可能被别的程序先占了，最常见的是苹果 container 的服务开着：先 container system stop，再重试。")
+        NapboxError(.addressUnavailable, """
+            虚拟机连不上网关 \(gateway)（\(detail)）：\(prefix)0/24 这个网段被别的程序的虚拟机网络占了。常见两种：\
+            苹果 container 的服务开着、没固定网段，在 ~/.config/container/config.toml 写 [network] subnet = "192.168.65.0/24"，\
+            再重启它（container system stop、container system start）；\
+            用虚拟机网络的程序崩溃后系统留着它的网段不放，运行 sudo killall InternetSharing（系统会自动重新拉起它）或重启电脑。\
+            处理完再重试。
+            """)
     }
 
     /// 构建虚拟机下一次用的地址：每次换一个。napboxd 崩溃时构建虚拟机来不及让引擎先退出，开着 Clash 的 TUN 时，

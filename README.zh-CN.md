@@ -103,6 +103,7 @@ npx napbox setup codex
 - 构建时用不了本机 Docker 的登录信息和本地镜像：`FROM` 要能从公开仓库拉到。
 - napbox 不导出镜像，发布用的镜像要用别的工具打包，比如苹果的 `container`。
 - 内存只在环境休眠时才还给 macOS。
+- 虚拟机用系统共用的 NAT 网，网段是 `192.168.64.0/24`。这个网段被别的程序的虚拟机网络占了时，起环境报 `address_unavailable`（连不上网关）。常见两种：苹果 `container` 没固定网段，在 `~/.config/container/config.toml` 写 `[network]` `subnet = "192.168.65.0/24"` 再重启它；用虚拟机网络的程序崩溃后系统留着网段不放，运行 `sudo killall InternetSharing` 或重启电脑。
 - 虚拟机没有交换空间。服务卡在内存上（到了自己的上限，或整个环境的内存用完）时，napbox 结束占内存最多的那个进程，在服务的日志里写明原因，不让它一直卡着。
 
 ## 参与贡献
