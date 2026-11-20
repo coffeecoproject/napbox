@@ -767,6 +767,32 @@ describe("develop.watch", { concurrency: false }, () => {
     assert.equal((await client.environment(target)).watchError, undefined);
   });
 
+  test("compose 在上次 up 之后改过：该重建的那次不做、原因在 watchError，同步照常；重新 up 时补上构建", async () => {
+    const runsBefore = (await client.runs(target)).runs.length;
+    write("compose.yaml", `${DEVELOP_COMPOSE}# 改过，没重新 up\n`);
+    assert.match((await client.environment(target)).composeChanged ?? "", /上次 up 之后改过：compose\.yaml/);
+    write("pkg.json", "v5\n");
+    await waitUntil("说明没重建", async () => /有一次重建没做/.test((await client.environment(target)).watchError ?? ""), 30_000);
+    const info = await client.environment(target);
+    assert.match(info.watchError ?? "", /compose 在上次 up 之后改过（compose\.yaml）/);
+    assert.equal(info.state, "running");
+    assert.equal((await client.runs(target)).runs.length, runsBefore, "不该重启");
+    assert.equal(await read("/app/pkg.json"), "v4\n", "镜像还是旧的");
+    write("src/while-stale.txt", "ok\n");
+    await waitFile("/app/src/while-stale.txt", "ok\n");
+
+    // 不带 build 的 up：镜像已经有了本来不构建，欠着的那次这时补上
+    const up = await client.up({ cwd: project, environment: {} });
+    assert.equal(up.composeChanged, undefined);
+    assert.equal(up.watchError, undefined);
+    assert.equal(await read("/app/pkg.json"), "v5\n", "up 时补上了构建");
+    assert.ok((await client.runs(target)).runs.length > runsBefore, "镜像变了，环境重启过");
+
+    write("pkg.json", "v6\n");
+    await waitFile("/app/pkg.json", "v6\n", 120_000);
+    assert.equal((await client.environment(target)).watchError, undefined);
+  });
+
   test("一批几百个文件", async () => {
     const started = Date.now();
     for (let i = 0; i < 300; i++) write(`src/many/f${i}.txt`, `${i}\n`);

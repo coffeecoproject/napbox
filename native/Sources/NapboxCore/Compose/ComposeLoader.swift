@@ -42,14 +42,22 @@ public struct ComposeRun: Sendable {
     }
 }
 
+/// 读 compose 的结果，连同定义以外的两样
+public struct LoadedCompose: Sendable {
+    public var project: ComposeProject
+    /// compose 的项目名（规则见 ComposeLoader.projectName）。napbox save 给没写 image 的服务起镜像名时用它，
+    /// 和 docker compose build 起的名字一样；环境的名字不用它，由 napbox 按仓库目录自己起。
+    public var name: String
+    /// 读过的文件：compose 文件、项目目录的 .env（没有也记）、env_file（ComposeSource 用）
+    public var files: [ComposeSource.File]
+}
+
 public enum ComposeLoader {
     public static func load(_ input: ComposeInput) throws(ComposeError) -> ComposeProject {
-        try loadNamed(input).project
+        try loadDetailed(input).project
     }
 
-    /// 连同 compose 的项目名一起给（规则见 projectName）。napbox save 给没写 image 的服务起镜像名时用它，
-    /// 和 docker compose build 起的名字一样；环境的名字不用它，由 napbox 按仓库目录自己起。
-    public static func loadNamed(_ input: ComposeInput) throws(ComposeError) -> (project: ComposeProject, name: String) {
+    public static func loadDetailed(_ input: ComposeInput) throws(ComposeError) -> LoadedCompose {
         guard let first = input.files.first else { throw ComposeError([.invalid("没有指定 compose 文件")]) }
         let projectDirectory = first.deletingLastPathComponent()
         let access = input.access
@@ -75,6 +83,8 @@ public enum ComposeLoader {
         } catch {
             throw ComposeError([error])
         }
+        var files = texts.map { ComposeSource.File(path: $0.url.path, text: $0.text) }
+        files.append(ComposeSource.File(path: dotEnvURL.path, digest: dotEnvText.map(ComposeSource.digest)))
         if let text = dotEnvText {
             for (k, v) in try DotEnv.parse(text, file: dotEnvURL.path, lookup: { input.callerEnvironment[$0] }) { dotEnv[k] = v }
         }
@@ -113,7 +123,7 @@ public enum ComposeLoader {
         let project = builder.build(merged)
         guard builder.issues.isEmpty, var project else { throw ComposeError(builder.issues) }
         project.unsetVariables = interpolator.missing
-        return (project, composeProjectName)
+        return LoadedCompose(project: project, name: composeProjectName, files: files + builder.readFiles)
     }
 
     /// `${COMPOSE_PROJECT_NAME}` 的值，规则和 compose 一样：调用方环境或 .env 里给的；没给就是 compose 最外层的 name
@@ -147,7 +157,31 @@ public enum ComposeFiles {
     ///   找到的 compose 文件读的时候再查（ComposeLoader）
     public static func resolve(explicit: [String], environment: [String: String], cwd: URL, worktree: URL,
                                access: HostAccess = .open) throws(NapboxError) -> [URL] {
-        let present = { (url: URL) in access.present(url.path) }
+        try locate(explicit: explicit, environment: environment, cwd: cwd, worktree: worktree, access: access).files
+    }
+
+    /// 找的时候看过的宿主机文件：读到的记内容，看过但不存在的也记
+    private final class Seen {
+        var files: [ComposeSource.File] = []
+    }
+
+    /// 和 resolve 一样，连同找的时候看过的文件一起给（.napbox.yaml、cwd 的 .env，以及看过但不存在的候选文件名）：
+    /// 它们变了，找到的 compose 文件就可能不一样（ComposeSource）
+    public static func locate(explicit: [String], environment: [String: String], cwd: URL, worktree: URL,
+                              access: HostAccess = .open) throws(NapboxError) -> (files: [URL], seen: [ComposeSource.File]) {
+        let seen = Seen()
+        let files = try find(explicit: explicit, environment: environment, cwd: cwd, worktree: worktree, access: access, seen: seen)
+        return (files, seen.files)
+    }
+
+    private static func find(explicit: [String], environment: [String: String], cwd: URL, worktree: URL,
+                             access: HostAccess, seen: Seen) throws(NapboxError) -> [URL] {
+        // 有的不用记：之后读它的时候会记内容（ComposeLoader）
+        let present = { (url: URL) -> Bool in
+            let found = access.present(url.path)
+            if !found { seen.files.append(ComposeSource.File(path: url.path, digest: nil)) }
+            return found
+        }
         func listed(_ paths: [String], notFound: String) throws(NapboxError) -> [URL] {
             let urls = paths.map { $0.hasPrefix("/") ? URL(fileURLWithPath: $0) : cwd.appending(path: $0) }.map(\.standardizedFileURL)
             for u in urls where !present(u) {
@@ -157,10 +191,10 @@ public enum ComposeFiles {
         }
         if !explicit.isEmpty { return try listed(explicit, notFound: "找不到 compose 文件") }
         let config = worktree.appending(path: ".napbox.yaml")
-        if let text = try readText(config, access: access) {
+        if let text = try readText(config, access: access, seen: seen) {
             return try fromConfig(text, worktree: worktree, present: present)
         }
-        let fromVariable = try composeFileVariable(environment, cwd: cwd, access: access)
+        let fromVariable = try composeFileVariable(environment, cwd: cwd, access: access, seen: seen)
         if !fromVariable.isEmpty { return try listed(fromVariable, notFound: "COMPOSE_FILE 里写的 compose 文件不存在") }
         // worktree 是 git 给出的真实路径，当前目录也要解开符号链接（比如 /tmp、/var），否则对不上、找不到头
         var dir = cwd.resolvingSymlinksInPath()
@@ -187,10 +221,10 @@ public enum ComposeFiles {
     /// `COMPOSE_FILE` 里列的路径，没设是空的。分隔符是 `:`，`COMPOSE_PATH_SEPARATOR` 可以换。
     /// 两个变量都是调用方环境里的优先，其次是 cwd 的 .env 里的。
     private static func composeFileVariable(_ environment: [String: String], cwd: URL,
-                                            access: HostAccess) throws(NapboxError) -> [String] {
+                                            access: HostAccess, seen: Seen) throws(NapboxError) -> [String] {
         var dotEnv: [String: String] = [:]
         let dotEnvURL = cwd.appending(path: ".env")
-        if let text = try readText(dotEnvURL, access: access) {
+        if let text = try readText(dotEnvURL, access: access, seen: seen) {
             do {
                 for (k, v) in try DotEnv.parse(text, file: dotEnvURL.path, lookup: { environment[$0] }) { dotEnv[k] = v }
             } catch {
@@ -203,9 +237,11 @@ public enum ComposeFiles {
     }
 
     /// 读 .napbox.yaml、cwd 的 .env：不存在是 nil
-    private static func readText(_ url: URL, access: HostAccess) throws(NapboxError) -> String? {
+    private static func readText(_ url: URL, access: HostAccess, seen: Seen) throws(NapboxError) -> String? {
         do {
-            return try access.readText(url.path, written: url.path, url.lastPathComponent)
+            let text = try access.readText(url.path, written: url.path, url.lastPathComponent)
+            seen.files.append(ComposeSource.File(path: url.path, digest: text.map(ComposeSource.digest)))
+            return text
         } catch {
             throw ComposeError([error]).napboxError
         }

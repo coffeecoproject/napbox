@@ -12,8 +12,9 @@ extension Daemon {
         let files = try ComposeFiles.resolve(explicit: params.files, environment: params.environment, cwd: cwd, worktree: location.worktree)
         let project: ComposeProject, projectName: String
         do {
-            (project, projectName) = try ComposeLoader.loadNamed(
+            let loaded = try ComposeLoader.loadDetailed(
                 ComposeInput(files: files, callerEnvironment: params.environment, profiles: params.profiles))
+            (project, projectName) = (loaded.project, loaded.name)
         } catch {
             throw error.napboxError
         }

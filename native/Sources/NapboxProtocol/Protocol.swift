@@ -91,6 +91,8 @@ public enum ErrorCode: String, Sendable {
     case composeNotFound = "compose_not_found"
     case composeInvalid = "compose_invalid"
     case composeUnsupported = "compose_unsupported"
+    /// compose 在上次 up 之后改过，这个操作（reset）会按存下的旧定义重跑一次性服务：先重新 up
+    case composeChanged = "compose_changed"
     /// create 带了 confine：compose 里 napbox 会读或会挂的宿主机路径，解开符号链接后不在代码目录以内
     case pathOutsideDirectory = "path_outside_directory"
     case notInRepository = "not_in_repository"
@@ -206,10 +208,13 @@ public struct EnvironmentInfo: Codable, Sendable {
     public var seededFrom: SeedSource?
     /// create 带 confine 建的环境是 true（宿主机路径都限定在代码目录以内），别的没有这一项
     public var confined: Bool?
+    /// compose（连同 .env、env_file、.napbox.yaml）在上次 up 之后改过时才有：改了哪些文件。环境用的还是那次存下的定义
+    /// （唤醒、按 restart 重启照常起；reset 和 develop.watch 的重建不做），重新 up 才生效。只比文件，不比调用方的环境变量
+    public var composeChanged: String?
 
     public init(name: String, owner: String?, state: EnvironmentState, worktree: String, ports: [PortInfo], hostPorts: [HostPortInfo], egress: EgressMode,
                 hostname: String, variables: [String: String], unsetVariables: [String], lastError: String? = nil, serviceExits: [ServiceExit] = [], watchError: String? = nil,
-                snapshotError: String? = nil, seededFrom: SeedSource? = nil, confined: Bool? = nil) {
+                snapshotError: String? = nil, seededFrom: SeedSource? = nil, confined: Bool? = nil, composeChanged: String? = nil) {
         self.name = name
         self.owner = owner
         self.state = state
@@ -226,6 +231,7 @@ public struct EnvironmentInfo: Codable, Sendable {
         self.snapshotError = snapshotError
         self.seededFrom = seededFrom
         self.confined = confined
+        self.composeChanged = composeChanged
     }
 }
 

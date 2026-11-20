@@ -1782,6 +1782,26 @@ volumes:
   data:
 `,
   );
+  // 改了 compose（和它读的 .env、env_file）没重新 up：init 把 MARK 记进数据卷，看它有没有按旧定义重跑
+  const staleCompose = repo(
+    "file-mount/stale-compose",
+    `services:
+  init:
+    image: alpine:3.20
+    environment: {MARK: "\${MARK}"}
+    command: ["sh", "-c", "echo $$MARK >> /data/init.log"]
+    volumes: ["data:/data"]
+  box:
+    image: alpine:3.20
+    command: ["sleep", "100000"]
+    env_file: [box.env]
+    volumes: ["data:/data"]
+    depends_on: {init: {condition: service_completed_successfully}}
+    stop_grace_period: 1s
+volumes:
+  data:
+`,
+  );
   const target: EnvironmentTarget = { cwd: directory };
   const host = (relative: string) => path.join(directory, relative);
   let daemon: Daemon;
@@ -1898,6 +1918,54 @@ volumes:
       writeFileSync(file, "back\n");
       assert.equal((await client.reset(other, ["data"])).state, "running");
       assert.equal(await marker(), "", "放回去以后 reset 照常换成空卷");
+    } finally {
+      await client.down(other).catch(() => {});
+    }
+  });
+
+  test("改了 compose 没重新 up：status 写明改了哪些文件，唤醒照常用旧定义，reset 拒绝；重新 up 后生效", async () => {
+    const other: EnvironmentTarget = { cwd: staleCompose };
+    const inBox = async (command: string) => (await execIn(client, other, "box", ["sh", "-c", command])).stdout;
+    writeFileSync(path.join(staleCompose, ".env"), "MARK=one\n");
+    writeFileSync(path.join(staleCompose, "box.env"), "A=1\n");
+    try {
+      const first = await client.up({ cwd: staleCompose, environment: {} });
+      assert.equal(first.composeChanged, undefined);
+      assert.equal(await inBox("echo $A; cat /data/init.log"), "1\none\n");
+
+      writeFileSync(path.join(staleCompose, ".env"), "MARK=two\n");
+      writeFileSync(path.join(staleCompose, "box.env"), "A=2\n");
+      const stale = await client.environment(other);
+      assert.match(stale.composeChanged ?? "", /^compose 在上次 up 之后改过：\.env、box\.env。.*重新 napbox up 才生效$/);
+      const listed = (await client.status()).environments.find((e) => e.name === stale.name);
+      assert.equal(listed?.composeChanged, stale.composeChanged, "status 里也有");
+
+      // 唤醒照常起，用的是存下的定义，跑完的一次性服务不重跑
+      assert.equal((await client.sleep(other)).state, "sleeping");
+      const woken = await client.wake(other);
+      assert.equal(woken.state, "running");
+      assert.notEqual(woken.composeChanged, undefined);
+      assert.equal(await inBox("echo $A; cat /data/init.log"), "1\none\n");
+
+      // reset 会重跑一次性服务：不按旧定义跑，环境和数据都不动
+      const error = await rejectsWithCode(client.reset(other, ["data"]), "compose_changed");
+      assert.match(error.message, /\.env、box\.env.*先重新 napbox up，再 reset/);
+      assert.equal((await client.environment(other)).state, "running");
+      assert.equal(await inBox("cat /data/init.log"), "one\n");
+
+      const again = await client.up({ cwd: staleCompose, environment: {} });
+      assert.equal(again.composeChanged, undefined);
+      assert.equal(await inBox("echo $A; cat /data/init.log"), "2\none\ntwo\n", "新定义生效，一次性服务按新定义重跑");
+      assert.equal((await client.reset(other, ["data"])).state, "running");
+      assert.equal(await inBox("cat /data/init.log"), "two\n");
+
+      // 只动了注释：定义没变，也提示（只比文件）；再 up 不重启，提示清掉
+      const runs = (await client.runs(other)).runs.length;
+      const composeFile = path.join(staleCompose, "compose.yaml");
+      writeFileSync(composeFile, `${readFileSync(composeFile, "utf8")}# 注释\n`);
+      assert.match((await client.environment(other)).composeChanged ?? "", /改过：compose\.yaml。/);
+      assert.equal((await client.up({ cwd: staleCompose, environment: {} })).composeChanged, undefined);
+      assert.equal((await client.runs(other)).runs.length, runs, "定义没变，不该重启");
     } finally {
       await client.down(other).catch(() => {});
     }

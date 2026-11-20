@@ -155,6 +155,7 @@ actor Daemon {
 
     func info(_ record: EnvironmentRecord) -> EnvironmentInfo {
         let active = record.activePorts
+        let stale = staleCompose(record)
         let ports = active.map {
             PortInfo(service: $0.service, containerPort: $0.containerPort, hostPort: $0.hostPort, variable: PortVariables.name(of: $0))
         }
@@ -168,10 +169,41 @@ actor Daemon {
             variables: PortVariables.all(active, hostname: record.hostname, hostPorts: host),
             unsetVariables: record.definition?.unsetVariables ?? [],
             lastError: sessions[record.name]?.lastFailure?.message, serviceExits: sessions[record.name]?.exits ?? [],
-            watchError: sessions[record.name]?.watchError,
+            watchError: watchError(record, stale: stale),
             snapshotError: record.snapshotSkipped?.summary,
-            confined: record.confinedRoot != nil ? true : nil
+            confined: record.confinedRoot != nil ? true : nil,
+            composeChanged: stale.map { "compose 在\($0.last) 之后改过：\($0.changed)。环境用的还是那次存下的定义，\($0.again) 才生效" }
         )
+    }
+
+    /// compose 在上次 up（调用方持有的是 create）之后改过：改了哪些文件，以及给人看的话里怎么称呼那次和该怎么做
+    struct StaleCompose {
+        /// 改过的文件（ComposeSource.changeSummary）
+        var changed: String
+        /// 「上次 up」
+        var last: String
+        /// 「重新 napbox up」
+        var again: String
+    }
+
+    /// 这个环境的定义是不是过时了：读 compose 时碰过的文件（compose 文件、.env、env_file、.napbox.yaml）在那之后改过。
+    /// 没改过是 nil；有这个功能之前登记的环境没记读过哪些文件，也是 nil。每次现读现比：都是小文件
+    func staleCompose(_ record: EnvironmentRecord) -> StaleCompose? {
+        guard let changed = record.source?.changeSummary(access: record.hostAccess, relativeTo: record.worktree) else { return nil }
+        guard record.owner == .worktree else { return StaleCompose(changed: changed, last: "上次 create", again: "重新 create") }
+        let temp = record.temporary.map { " --temp \($0)" } ?? ""
+        return StaleCompose(changed: changed, last: "上次 up", again: "重新 napbox up\(temp)")
+    }
+
+    /// status 里的 watchError：同步、重建的失败，加上 compose 改过时没做的那次重建（rebuildDeferred）
+    private func watchError(_ record: EnvironmentRecord, stale: StaleCompose?) -> String? {
+        var errors = [sessions[record.name]?.watchError].compactMap { $0 }
+        if record.rebuildDeferred == true {
+            let again = stale?.again ?? (record.owner == .worktree ? "重新 napbox up" : "重新 create")
+            let when = stale.map { "compose 在\($0.last) 之后改过（\($0.changed)）" } ?? "当时 compose 改过"
+            errors.append("develop.watch 有一次重建没做：\(when)，按旧定义重建会拿旧配置重跑一次性服务。\(again)，会连同这次的改动一起构建")
+        }
+        return errors.isEmpty ? nil : errors.joined(separator: "\n")
     }
 
     /// 按 target 找登记的环境：

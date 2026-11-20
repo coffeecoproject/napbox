@@ -168,6 +168,9 @@ extension Daemon {
             try await launch(record, project: project, skipping: Set(record.completedServices), purpose: .wake, progress: progress)
             await wakeSlots.release()
             print("环境 \(name) 唤醒用了 \(String(format: "%.2f", Date().timeIntervalSince(started))) 秒")
+            if let stale = staleCompose(record) {
+                print("环境 \(name) 唤醒用的是\(stale.last) 存下的定义，compose 在那之后改过：\(stale.changed)")
+            }
         } catch {
             await wakeSlots.release()
             print("环境 \(name) 唤醒失败：\(error.message)")

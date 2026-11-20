@@ -15,13 +15,13 @@ extension Daemon {
         let cwd = URL(fileURLWithPath: params.cwd)
         let location = try await Blocking.run { () throws(NapboxError) in try WorktreeLocation.locate(from: cwd) }
         try requireNotCallerDirectory(location.worktree.path)
-        let files = try ComposeFiles.resolve(explicit: params.files, environment: params.environment, cwd: cwd, worktree: location.worktree)
-        let project = try loadCompose(files, environment: params.environment, profiles: params.profiles)
-        return try await startInWorktree(location, temporary: params.temp, project: project, egress: nil, rebuild: params.build)
+        let compose = try readCompose(explicit: params.files, environment: params.environment, cwd: cwd, worktree: location.worktree,
+                                      profiles: params.profiles)
+        return try await startInWorktree(location, temporary: params.temp, compose: compose, egress: nil, rebuild: params.build)
     }
 
     /// up 和 run 共用：起这个 worktree 的环境（temporary 不是 nil 时是它的临时环境）。
-    func startInWorktree(_ location: WorktreeLocation, temporary: String?, project: ComposeProject, egress: EgressMode?,
+    func startInWorktree(_ location: WorktreeLocation, temporary: String?, compose: ReadCompose, egress: EgressMode?,
                          rebuild: Bool, foreground: ForegroundService? = nil) async throws(NapboxError) -> EnvironmentInfo {
         // 环境名在排队前按当时的登记算：排队期间同一个项目里同名的另一个 worktree 可能先登记了这个名字，
         // 这时按新的登记重新算名字、重新排队
@@ -29,7 +29,7 @@ extension Daemon {
         while true {
             let queued = name
             let started = try await serialized(queued) { () throws(NapboxError) -> EnvironmentInfo? in
-                try await self.start(name: queued, location: location, temporary: temporary, project: project, egress: egress,
+                try await self.start(name: queued, location: location, temporary: temporary, compose: compose, egress: egress,
                                      rebuild: rebuild, foreground: foreground)
             }
             if let started { return started }
@@ -37,28 +37,39 @@ extension Daemon {
         }
     }
 
+    /// 读出来的定义，连同是从哪些文件读的（记进登记，之后看它们改没改过）
+    struct ReadCompose: Sendable {
+        var project: ComposeProject
+        var source: ComposeSource
+    }
+
+    /// 找 compose 文件并读出来（up、run、create 共用）。
+    /// - explicit：指定的 compose 文件，相对 cwd；没给就按 ComposeFiles 的规则找
     /// - run：napbox run 时只留其中一个服务和它依赖的
     /// - access：create 带 confine 时是限定在代码目录里的
-    func loadCompose(_ files: [URL], environment: [String: String], profiles: [String],
-                     run: ComposeRun? = nil, access: HostAccess = .open) throws(NapboxError) -> ComposeProject {
+    func readCompose(explicit: [String], environment: [String: String], cwd: URL, worktree: URL, profiles: [String],
+                     run: ComposeRun? = nil, access: HostAccess = .open) throws(NapboxError) -> ReadCompose {
+        let found = try ComposeFiles.locate(explicit: explicit, environment: environment, cwd: cwd, worktree: worktree, access: access)
         do {
-            return try ComposeLoader.load(ComposeInput(files: files, callerEnvironment: environment, profiles: profiles, run: run,
-                                                       access: access))
+            let loaded = try ComposeLoader.loadDetailed(ComposeInput(files: found.files, callerEnvironment: environment, profiles: profiles,
+                                                                     run: run, access: access))
+            return ReadCompose(project: loaded.project, source: ComposeSource(loaded.files + found.seen))
         } catch {
             throw error.napboxError
         }
     }
 
     /// 名字已经被别的环境占了时返回 nil
-    func start(name: String, location: WorktreeLocation, temporary: String?, project: ComposeProject, egress: EgressMode?,
+    func start(name: String, location: WorktreeLocation, temporary: String?, compose: ReadCompose, egress: EgressMode?,
                rebuild: Bool, foreground: ForegroundService?) async throws(NapboxError) -> EnvironmentInfo? {
+        let project = compose.project
         if let existing = store.state.environment(name),
            existing.owner != .worktree || existing.worktree != location.worktree.path || existing.temporary != temporary { return nil }
         let seed = try stageFirstSeed(name, location: location, temporary: temporary, project: project)
         let registered: EnvironmentRecord
         do {
-            registered = try await bringUp(name, project: project, access: .open, egress: egress, rebuild: rebuild, foreground: foreground,
-                                           seed: seed) { state in
+            registered = try await bringUp(name, project: project, source: compose.source, access: .open, egress: egress, rebuild: rebuild,
+                                           foreground: foreground, seed: seed) { state in
                 EnvironmentRecord(
                     name: name, project: state.projectName(for: location.mainRepository), mainRepository: location.mainRepository.path,
                     worktree: location.worktree.path, owner: .worktree, hostname: state.newHostname(for: name, temporary: temporary),
@@ -109,17 +120,17 @@ extension Daemon {
         let access: HostAccess = params.confine == true
             ? .confined(store.state.environment(params.name)?.confinedRoot.map(Confinement.init(root:)) ?? Confinement(directory: directory.path))
             : .open
-        let files = try ComposeFiles.resolve(explicit: params.files, environment: params.environment, cwd: directory, worktree: directory,
-                                             access: access)
-        let project = try loadCompose(files, environment: params.environment, profiles: params.profiles, access: access)
+        let compose = try readCompose(explicit: params.files, environment: params.environment, cwd: directory, worktree: directory,
+                                      profiles: params.profiles, access: access)
         let name = params.name, owner = EnvironmentRecord.Owner.caller(id: params.owner), egress = params.egress
         return try await serialized(name) { () throws(NapboxError) in
-            try await self.startCaller(name, owner: owner, directory: directory, project: project, egress: egress, access: access)
+            try await self.startCaller(name, owner: owner, directory: directory, compose: compose, egress: egress, access: access)
         }
     }
 
-    func startCaller(_ name: String, owner: EnvironmentRecord.Owner, directory: URL, project: ComposeProject,
+    func startCaller(_ name: String, owner: EnvironmentRecord.Owner, directory: URL, compose: ReadCompose,
                      egress: EgressMode?, access: HostAccess) async throws(NapboxError) -> EnvironmentInfo {
+        let project = compose.project
         let root = access.confinement?.root
         // 只起了临时环境的 worktree 也占着它开发环境的名字（NapboxState.holder）
         if let existing = store.state.holder(of: name) {
@@ -136,15 +147,17 @@ extension Daemon {
                 try setConfinedRoot(name, root)
                 await stopRunning(name, keepCompleted: false)
             }
-            // 调用方重启后再 create 碰到的都是休眠的环境：定义没变就只是唤醒，建库、导入数据这些一次性服务不重跑
-            if running[name] == nil, existing.definition == project, existing.confinedRoot == root {
+            // 调用方重启后再 create 碰到的都是休眠的环境：定义没变就只是唤醒，建库、导入数据这些一次性服务不重跑。
+            // watch 欠着一次重建的不走这条：要先构建（bringUp）
+            if running[name] == nil, existing.definition == project, existing.confinedRoot == root, existing.rebuildDeferred != true {
                 if shuttingDown { throw Self.exiting }
+                try recordSource(name, compose.source, rebuilt: false)
                 if let egress, egress != existing.egress { _ = try await setEgress(name, egress) }
                 try await wakeNow(name, cooldown: false)
                 return info(store.state.environment(name)!)
             }
         }
-        return info(try await bringUp(name, project: project, access: access, egress: egress, rebuild: false) { state in
+        return info(try await bringUp(name, project: project, source: compose.source, access: access, egress: egress, rebuild: false) { state in
             EnvironmentRecord(name: name, project: nil, mainRepository: nil, worktree: directory.path, owner: owner,
                               hostname: state.newHostname(for: name, temporary: nil), confinedRoot: root)
         })
@@ -164,18 +177,21 @@ extension Daemon {
     /// up 和 create 共用：已经在运行、定义和镜像都没变、服务都在就不重启（只按要求换出网模式）；否则整个环境重新起
     /// （单个服务不能单独重启），一次性服务重跑。准备好了才停旧环境：
     /// secrets 的文件不在、构建失败、镜像名写错、端口被占这类失败不影响在跑的环境，登记和定义也不变。
+    /// - source：这份定义是从哪些文件读的（up、create），和定义一起记进登记；nil 是沿用登记里的定义（watch 重建），不动
     /// - egress：要切到的出网模式，nil 是不变（新环境 open）
-    /// - rebuild：up --build，写了 build 的服务都重新构建
+    /// - rebuild：up --build，写了 build 的服务都重新构建。watch 欠着一次重建时（rebuildDeferred）up、create 也当作带了它
     /// - foreground：napbox run 在前台跑的那个服务
     /// - seed：第一次创建、已经复制到 incoming/ 的数据（x-napbox.seed）。新登记里同时记上换卷的记号，和登记是同一次写入：
     ///   之后哪一步停下（失败、napboxd 被杀），记号都在，launch 或 napboxd 启动时接着换进去，不会变成登记了却一直是空卷
     /// - access：怎么碰宿主机上的文件，和登记（或要登记的）一致：worktree 的是 .open，调用方持有的按 confinedRoot
     /// - newRecord：还没登记时的新登记
-    func bringUp(_ name: String, project: ComposeProject, access: HostAccess, egress: EgressMode?, rebuild: Bool,
+    func bringUp(_ name: String, project: ComposeProject, source: ComposeSource?, access: HostAccess, egress: EgressMode?, rebuild: Bool,
                  foreground: ForegroundService? = nil, seed: SeedSource? = nil,
                  newRecord: (NapboxState) -> EnvironmentRecord) async throws(NapboxError) -> EnvironmentRecord {
         if shuttingDown { throw Self.exiting }
         let startedAt = Date()
+        // watch 那次没做的重建这次补上：不带 --build 时镜像已经有了就不构建
+        let rebuild = rebuild || (source != nil && store.state.environment(name)?.rebuildDeferred == true)
         let rebuilt: Bool
         do {
             // 不用等的先查：挂载的来源不成立时不必先花时间构建
@@ -188,6 +204,8 @@ extension Daemon {
             throw error
         }
         if !rebuilt, running[name] != nil, let registered = store.state.environment(name), registered.definition == project {
+            // 定义一样，文件可能改过（只动了注释）：记成这次读的，之后不再提示改过
+            try recordSource(name, source, rebuilt: rebuild)
             if let egress, egress != registered.egress { _ = try await setEgress(name, egress) }
             try await restartStoppedServices(name, purpose: .up)
             // 环境在跑，定义也是要的这份：之前准备失败时记下的错误已经不成立了
@@ -196,7 +214,7 @@ extension Daemon {
         }
         let record: EnvironmentRecord
         do {
-            record = try await prepare(name, project: project, egress: egress, foreground: foreground) { state in
+            record = try await prepare(name, project: project, source: source, rebuilt: rebuild, egress: egress, foreground: foreground) { state in
                 var r = newRecord(state)
                 if let seed { r.pending = .replaceVolumes(volumes: seed.volumes, seed: seed) }
                 return r
@@ -209,6 +227,21 @@ extension Daemon {
         await stopRunning(name, keepCompleted: false)
         try await launch(record, project: project, skipping: [], purpose: .up, foreground: foreground)
         return store.state.environment(name)!
+    }
+
+    /// 定义不用换时（在跑、定义没变，或者只是唤醒）：这次读的文件、已经补上的重建也要记进登记。
+    /// - source：nil 是这次没有重新读 compose
+    /// - rebuilt：这次强制构建过，watch 欠着的那次重建算补上了
+    private func recordSource(_ name: String, _ source: ComposeSource?, rebuilt: Bool) throws(NapboxError) {
+        guard let registered = store.state.environment(name) else { return }
+        let source = source ?? registered.source
+        let deferred = rebuilt ? nil : registered.rebuildDeferred
+        guard source != registered.source || deferred != registered.rebuildDeferred else { return }
+        try store.update { (state: inout NapboxState) throws(NapboxError) in
+            guard let i = state.environments.firstIndex(where: { $0.name == name }) else { return }
+            state.environments[i].source = source
+            state.environments[i].rebuildDeferred = deferred
+        }
     }
 
     /// up、create、wake 要保证服务都在：环境在跑，但有服务不该停却停了（restart 不管的退出）时，整个环境重启
@@ -249,7 +282,8 @@ extension Daemon {
     /// 起环境之前的准备：拉镜像并查镜像和 compose 合起来成不成立、分配地址和端口，把新定义写进登记。全程不碰在跑的环境。
     /// 从分配地址到写登记之间不能有等待：别的名字的环境不在同一个队列里，它们看不到还没登记的地址和端口，
     /// 会分到同一个。
-    private func prepare(_ name: String, project: ComposeProject, egress: EgressMode?, foreground: ForegroundService?,
+    private func prepare(_ name: String, project: ComposeProject, source: ComposeSource?, rebuilt: Bool, egress: EgressMode?,
+                         foreground: ForegroundService?,
                          newRecord: (NapboxState) -> EnvironmentRecord) async throws(NapboxError) -> EnvironmentRecord {
         // 这段可能很久，也取消不了，napboxd 退出时不等它（shutdown）；等完了再看要不要继续
         preparing.insert(name)
@@ -268,6 +302,8 @@ extension Daemon {
             state.recordAllocation(ports)
             r.ip = ip
             r.definition = project
+            if let source { r.source = source }
+            if rebuilt { r.rebuildDeferred = nil }
             r.completedServices = []
             if let egress { r.egress = egress }
             state.environments.removeAll { $0.name == name }
@@ -308,6 +344,11 @@ extension Daemon {
             env = try await runtime.start(record, project: project, skipping: skipping, foreground: foreground, trace: trace,
                                           progress: progress)
         } catch {
+            // 唤醒、按 restart 重启用的是存下的定义：compose 在那之后改过的话可能就是原因，报错里说出来
+            var error = error
+            if purpose == .wake || purpose == .restart, let stale = staleCompose(record) {
+                error.message += "。另外 compose 在\(stale.last) 之后改过（\(stale.changed)），用的还是那次存下的定义，可能就是原因：\(stale.again)"
+            }
             await startFailed(record, project: project, id: runId, purpose: purpose, startedAt: startedAt, error: error, trace: trace,
                               seededFrom: seededFrom)
             if record.temporary != nil { await destroyTemporary(name, reason: "\(Self.description(purpose))失败") }
@@ -413,6 +454,11 @@ extension Daemon {
         if shuttingDown { throw Self.exiting }
         guard let record = store.state.environment(name), let project = record.definition else {
             throw NapboxError(.environmentNotFound, "环境 \(name) 没有登记或没有定义")
+        }
+        // reset 会重跑一次性服务，等于一次 up：compose 改过还按旧定义跑，是拿新代码配旧配置
+        if let stale = staleCompose(record) {
+            throw NapboxError(.composeChanged, "compose 在\(stale.last) 之后改过（\(stale.changed)），reset 用的是那次存下的定义，"
+                + "会按旧定义重跑一次性服务：先\(stale.again)，再 reset")
         }
         let unknown = volumes.filter { !project.volumes.contains($0) }
         guard unknown.isEmpty else {

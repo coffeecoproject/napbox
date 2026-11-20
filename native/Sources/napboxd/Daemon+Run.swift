@@ -14,9 +14,8 @@ extension Daemon {
         let cwd = URL(fileURLWithPath: params.cwd)
         let location = try await Blocking.run { () throws(NapboxError) in try WorktreeLocation.locate(from: cwd) }
         try requireNotCallerDirectory(location.worktree.path)
-        let files = try ComposeFiles.resolve(explicit: params.files, environment: params.environment, cwd: cwd, worktree: location.worktree)
-        let project = try loadCompose(
-            files, environment: params.environment, profiles: params.profiles,
+        let compose = try readCompose(
+            explicit: params.files, environment: params.environment, cwd: cwd, worktree: location.worktree, profiles: params.profiles,
             run: ComposeRun(service: params.service, command: params.command, noDeps: params.noDeps)
         )
         let callerGone = CallerGone()
@@ -25,7 +24,7 @@ extension Daemon {
         // 起不来时 launch 已经把它销毁了；还没登记就停下的，构建出来的镜像由 start 删掉
         let name = try await withTaskCancellationHandler { () async throws(NapboxError) -> String in
             try await startInWorktree(
-                location, temporary: TemporaryEnvironment.generatedName(), project: project, egress: params.egress,
+                location, temporary: TemporaryEnvironment.generatedName(), compose: compose, egress: params.egress,
                 rebuild: params.build, foreground: foreground
             ).name
         } onCancel: {

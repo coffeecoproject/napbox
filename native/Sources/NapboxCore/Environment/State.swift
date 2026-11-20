@@ -104,6 +104,12 @@ public struct EnvironmentRecord: Codable, Equatable, Sendable {
     /// 声明了 x-napbox.seed 的开发环境，最近一次停下没拍成快照时记上原因；下次拍成了就清掉。
     /// status 和别的 worktree 从它复制数据时（snapshot_not_found）带上，不用去翻 napboxd 的日志
     public var snapshotSkipped: SnapshotSkip?
+    /// 定义是从哪些文件读出来的（up、create 时和 definition 一起记）。之后看它们改没改过：改了要重新 up 才生效。
+    /// 有这个功能之前登记的环境没有，下次 up 之前不检查
+    public var source: ComposeSource?
+    /// develop.watch 该重建时 compose 在上次 up 之后改过，那次重建没做：下次 up、create 时补上（强制构建）再清掉。
+    /// 记在登记里：up 不带 --build 时镜像已经有了就不构建，napboxd 重启后也不能忘了还欠着一次
+    public var rebuildDeferred: Bool?
 
     public struct SnapshotSkip: Codable, Equatable, Sendable {
         /// 那次停下的时间

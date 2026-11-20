@@ -71,6 +71,7 @@ export function describeEnvironment(info: EnvironmentInfo): string {
   if (info.state !== "running") lines.push("休眠时一连接就会自动唤醒，不用手动启动。");
   if (info.lastError) lines.push(`最近出错：${info.lastError}`);
   if (info.snapshotError) lines.push(info.snapshotError);
+  if (info.composeChanged) lines.push(info.composeChanged);
   if (info.unsetVariables.length) {
     lines.push(`compose 里用到但没有值的变量：${info.unsetVariables.join("、")}`);
   }

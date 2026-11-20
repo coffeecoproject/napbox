@@ -17,6 +17,7 @@ export const errorCodes = [
   "compose_not_found",
   "compose_invalid",
   "compose_unsupported",
+  "compose_changed",
   "path_outside_directory",
   "not_in_repository",
   "port_unavailable",
@@ -121,6 +122,8 @@ export const EnvironmentInfo = z.object({
   seededFrom: SeedSource.optional(),
   /** create 带 confine 建的环境是 true，别的没有这一项 */
   confined: z.literal(true).optional(),
+  /** compose（连同 .env、env_file、.napbox.yaml）在上次 up 之后改过时才有：改了哪些文件。重新 up 才生效 */
+  composeChanged: z.string().optional(),
 });
 
 export const StatusResult = z.object({

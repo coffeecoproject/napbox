@@ -309,14 +309,32 @@ extension Daemon {
     }
 
     /// 重新构建，镜像变了整个环境重启。失败时旧环境接着跑，原因放在 status 的 watchError，成功构建后才清（bringUp 里）。
+    /// compose 在上次 up 之后改过时不做：重建会重跑一次性服务，等于一次 up，按存下的旧定义跑是拿新代码配旧配置。
+    /// 记进登记（rebuildDeferred），status 的 watchError 里说明，下次 up 时补上
     private func rebuildNow(_ name: String, ifStill env: RunningEnvironment) async {
         guard running[name] === env, let record = store.state.environment(name), let project = record.definition else { return }
+        if let stale = staleCompose(record) {
+            print("环境 \(name)：依赖的文件变了，但 compose 在\(stale.last) 之后改过（\(stale.changed)），不自动重建，等\(stale.again)")
+            deferRebuild(name)
+            return
+        }
         print("环境 \(name)：依赖的文件变了，重新构建")
         do throws(NapboxError) {
-            _ = try await bringUp(name, project: project, access: record.hostAccess, egress: nil, rebuild: true) { _ in record }
+            _ = try await bringUp(name, project: project, source: nil, access: record.hostAccess, egress: nil, rebuild: true) { _ in record }
         } catch {
             print("环境 \(name) 的 develop.watch 重建失败：\(error.message)")
             sessions[name, default: EnvSession()].watchBuildError = error.message
+        }
+    }
+
+    private func deferRebuild(_ name: String) {
+        guard store.state.environment(name)?.rebuildDeferred != true else { return }
+        do {
+            try store.update { (state: inout NapboxState) throws(NapboxError) in
+                if let i = state.environments.firstIndex(where: { $0.name == name }) { state.environments[i].rebuildDeferred = true }
+            }
+        } catch {
+            print("环境 \(name) 记录没做的重建失败：\(error.message)")
         }
     }
 

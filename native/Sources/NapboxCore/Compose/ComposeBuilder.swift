@@ -15,6 +15,8 @@ struct ComposeBuilder {
     var homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
 
     private(set) var issues: [ComposeIssue] = []
+    /// 读过的 env_file（required: false 又不存在的也记）：内容读进了定义，改了要重新 up 才生效（ComposeSource）
+    private(set) var readFiles: [ComposeSource.File] = []
 
     private static let serviceKeys: Set<String> = [
         "image", "build", "command", "entrypoint", "environment", "env_file", "working_dir", "init", "shm_size",
@@ -483,6 +485,7 @@ struct ComposeBuilder {
                 issues.append(error)
                 continue
             }
+            readFiles.append(ComposeSource.File(path: url.path, digest: read.map(ComposeSource.digest)))
             guard let text = read else {
                 if required { issues.append(.invalid("\(p)：读不到 \(url.path)")) }
                 continue
