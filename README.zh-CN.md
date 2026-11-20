@@ -8,7 +8,7 @@ napbox 按项目的 compose 文件，给每个 git worktree 起一套隔离的�
 
 底层是苹果开源的 [Containerization](https://github.com/apple/containerization)：一个环境一台轻量的 Linux 虚拟机，环境里的服务都在这台虚拟机里。
 
-**状态：0.1.12，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
+**状态：0.1.13，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
 
 ## 为什么
 

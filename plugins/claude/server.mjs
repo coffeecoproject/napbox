@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const VERSION = "0.1.12";
+const VERSION = "0.1.13";
 
 // 和 src/agent/locations.ts 的 cacheDirectory 同一个目录
 const versions = path.join(homedir(), "Library/Caches/napbox/versions");
