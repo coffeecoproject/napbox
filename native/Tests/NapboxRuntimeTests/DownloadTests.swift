@@ -179,7 +179,6 @@ import Testing
         #expect(error?.message.contains("已经有一个 napbox setup") == true)
         #expect(error?.message.contains("进程 \(getpid())") == true)
         close(first)
-        close(try Prepare.lock(in: directory))
     }
 }
 
