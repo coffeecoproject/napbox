@@ -45,11 +45,11 @@ struct ContainerPlan: Sendable {
     let foreground: ForegroundService?
 
     /// - portVariables：这个环境的端口变量，换掉 environment 里引用的（PortReferences）
-    /// - freshRootfs：这次起环境新解包出来的根文件系统，同一个镜像的服务从它克隆（EnvironmentLayout.rootfs）
+    /// - templates：按镜像留着的根文件系统模板，服务的根文件系统从它克隆（EnvironmentLayout.rootfs）
     /// - trace：记下根文件系统是怎么来的
     /// - shares：宿主机路径怎么挂进虚拟机（confine 的从代码目录的共享绑定，那份共享由 Runtime.createPod 挂上）
     init(service s: Service, image: Containerization.Image, layout: EnvironmentLayout, portVariables: [String: String],
-         freshRootfs: inout [String: URL], trace: RunTrace, foreground: ForegroundService? = nil,
+         templates: RootfsTemplates, trace: RunTrace, foreground: ForegroundService? = nil,
          shares: HostShares) async throws(NapboxError) {
         name = s.name
         self.foreground = foreground
@@ -61,7 +61,7 @@ struct ContainerPlan: Sendable {
         imageCreated = settings.created
         arguments = settings.arguments
         stopSignal = settings.stopSignal
-        let prepared = try await layout.rootfs(s.name, image: image, platform: s.imagePlatform, definition: try Self.definition(s), fresh: &freshRootfs)
+        let prepared = try await layout.rootfs(s.name, image: image, platform: s.imagePlatform, definition: try Self.definition(s), templates: templates)
         rootfs = prepared.mount
         trace.rootfs(s.name, prepared.source)
 

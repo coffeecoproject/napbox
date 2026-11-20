@@ -701,9 +701,9 @@ public struct ServiceRun: Codable, Sendable {
 
     /// 根文件系统是怎么来的
     public enum Rootfs: String, Codable, Sendable {
-        /// 从镜像解包
+        /// 这个镜像第一次用到，从镜像解包
         case unpacked
-        /// 这次起环境已经给同一个镜像的别的服务解包过，克隆那一份
+        /// 这个镜像之前解包过（这个环境的别的服务，或者别的环境），克隆那一份刚解出来的
         case cloned
         /// 镜像和服务的定义都没变，沿用上次的，容器里写的东西还在
         case reused

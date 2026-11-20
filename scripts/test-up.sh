@@ -182,8 +182,8 @@ check "唤醒后再 up：在运行、定义没变，直接返回" test "$(jq -c 
 echo "改了 compose 再 up"
 write_compose v2
 up="$(cd "$repo" && "$napbox" up)" || echo "$up"
-check "web 的定义变了，根文件系统重建（重新解包，不从 probe 用过的克隆）" test "$(web_says "$web")" = "fresh v2"
-check "运行记录里 web 是解包的，没变的 db、probe、seed 沿用" test "$(rootfs_of db probe seed web)" = '["reused","reused","reused","unpacked"]'
+check "web 的定义变了，根文件系统重建（从模板克隆，不带 web、probe 写过的东西）" test "$(web_says "$web")" = "fresh v2"
+check "运行记录里 web 是克隆的（镜像之前解过，不再解），没变的 db、probe、seed 沿用" test "$(rootfs_of db probe seed web)" = '["reused","reused","reused","cloned"]'
 check "端口不变" test "$(port_of web)" = "$web"
 check "显式 up 和 Docker 一样会再跑一次 seed" test "$(sql "$db" 'select count(*) from seeded')" = "2"
 

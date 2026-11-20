@@ -288,6 +288,20 @@ describe("临时环境", { concurrency: false }, () => {
     assert.equal(environmentDirectories(), 2);
   });
 
+  test("销毁后同名再起：镜像不再解包，根文件系统从模板克隆，是刚解出来的样子", async () => {
+    const rootfsOf = async (temp?: string, run = -1) =>
+      (await client.runs({ cwd, temp })).runs.at(run)?.services.find((s) => s.service === "db")?.rootfs;
+    assert.equal(await rootfsOf(undefined, 0), "unpacked", "这个镜像第一次用到（开发环境）时解包");
+    assert.equal(await rootfsOf("t2"), "cloned", "别的环境再用到同一个镜像时克隆");
+    // t2 往自己的根文件系统里写一个文件：模板不能跟着变
+    assert.equal((await cli(cwd, ["exec", "--temp", "t2", "db", "--", "sh", "-c", "echo 在-t2 > /marker"])).code, 0);
+    await client.up({ cwd, environment: {}, temp: "t1" });
+    assert.equal(await rootfsOf("t1"), "cloned");
+    assert.notEqual((await cli(cwd, ["exec", "--temp", "t1", "db", "--", "test", "-e", "/marker"])).code, 0, "别的环境写的东西不在");
+    await client.down({ cwd, temp: "t1" });
+    assert.equal(environmentDirectories(), 2);
+  });
+
   test("down --temp 不等服务收尾：不理停止信号、stop_grace_period 很长的服务也马上停，数据反正要删", async () => {
     const slow = repo("slow-stop", `services:\n  app:\n    image: alpine:3.20\n    command: ["sleep", "100000"]\n    stop_grace_period: 60s\n`);
     await client.up({ cwd: slow, environment: {}, temp: "s1" });

@@ -189,10 +189,12 @@ extension Daemon {
         }
     }
 
-    /// 删大文件要一会儿，不占着 actor
+    /// 删大文件要一会儿，不占着 actor。顺带清掉镜像已经不在的根文件系统模板：平常删镜像时就清了，
+    /// 这里补上标签指到新内容（重新拉）留下的、napboxd 被杀留下的、升级前的版本留下的
     func purgeRecycled() async {
         let runtime = runtime
         let messages = await Task.detached { runtime.purgeRecycled() }.value
         for message in messages { print(message) }
+        await runtime.purgeRootfsTemplates()
     }
 }

@@ -597,7 +597,7 @@ volumes:
     writeFileSync(path.join(dir, "compose.yaml"), compose("2"));
     await client.up({ cwd: dir, environment: {} });
     const keeper = (await client.runs(target)).runs.at(-1)?.services.find((s) => s.service === "keeper");
-    assert.equal(keeper?.rootfs, "unpacked", "keeper 的定义变了，根文件系统应该重建");
+    assert.equal(keeper?.rootfs, "cloned", "keeper 的定义变了，根文件系统应该重建（镜像解过，从模板克隆）");
     assert.equal(await sh("keeper", "cat /vol/mine.txt"), "mine\n");
     assert.equal(keeperVolumes().length, 2);
   });

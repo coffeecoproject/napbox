@@ -24,6 +24,8 @@ public actor Runtime {
     /// 建数据卷、构建缓存用的 e2fsprogs
     let disk: DataDisk
     let builder: ImageBuilder
+    /// 按镜像留着的根文件系统模板，各环境的根文件系统从它克隆
+    let templates: RootfsTemplates
     /// 正在做或已经做完的那次准备。同时进来的都等它：各做各的会互相删掉对方刚建的 init.block
     private var preparing: Task<(store: ImageStore, vmm: VZVirtualMachineManager), Error>?
 
@@ -47,6 +49,7 @@ public actor Runtime {
         guardBinary = programs.appending(path: "napbox-guard")
         disk = DataDisk(programs: programs)
         builder = ImageBuilder(directory: supportDirectory.appending(path: "builder"), guardBinary: guardBinary, disk: disk)
+        templates = RootfsTemplates(root: supportDirectory.appending(path: "rootfs-templates"))
     }
 
     static func openImageStore(supportDirectory: URL) throws -> ImageStore {
@@ -158,9 +161,25 @@ public actor Runtime {
             let image = try await builder.build(request, store: store, vmm: vmm)
             if try await Images.platformDigest(image, b.platform) != before { changed = true }
         }
-        // 重新构建后旧版本的层没人用了。根文件系统是解包出来的独立文件，在跑的环境不受影响
-        if changed { _ = try? await store.cleanUpOrphanedBlobs() }
+        // 重新构建后旧版本的层、旧版本的根文件系统模板没人用了。根文件系统是克隆出来的独立文件，在跑的环境不受影响
+        if changed {
+            _ = try? await store.cleanUpOrphanedBlobs()
+            await purgeRootfsTemplates()
+        }
         return changed
+    }
+
+    /// 镜像库里已经没有的镜像，它的根文件系统模板也删掉（RootfsTemplates）。读不出镜像库有哪些镜像时不删。
+    /// 每次重新读镜像库（它的清单每次都从磁盘读）：napboxd 刚启动、运行环境还没准备好时也能清。
+    /// 还没有过模板时不碰镜像库：打开它会建目录，还没 setup 的数据目录里不该多出东西
+    public func purgeRootfsTemplates() async {
+        guard FileManager.default.fileExists(atPath: templates.root.path) else { return }
+        guard let images = try? await Self.openImageStore(supportDirectory: supportDirectory).list() else { return }
+        var digests: Set<String> = []
+        for image in images {
+            digests.formUnion(((try? await image.index())?.manifests ?? []).map(\.digest))
+        }
+        await templates.purge(keeping: digests)
     }
 
     /// napboxd 退出前调用
@@ -199,6 +218,7 @@ public actor Runtime {
             if !built.isEmpty {
                 for image in built { try await store.delete(reference: image.reference) }
                 try await store.cleanUpOrphanedBlobs()
+                await purgeRootfsTemplates()
             }
         } catch {
             throw NapboxError(.internalError, "\(error)")
@@ -244,14 +264,13 @@ public actor Runtime {
 
         // 每个 ContainerPlan 打开一个日志文件：中途失败时把已经打开的关上（napboxd 常驻，唤醒反复失败时句柄会越积越多）
         var containers: [ContainerPlan] = []
-        var freshRootfs: [String: URL] = [:]
         let pod: LinuxPod
         do throws(NapboxError) {
             for s in project.services {
                 guard let image = images[s.name] else { throw NapboxError(.internalError, "\(s.name) 的镜像没有准备") }
                 trace.image(s.name, reference: image.reference, digest: image.digest, platformDigest: try await Images.platformDigest(image, s.imagePlatform))
                 containers.append(try await ContainerPlan(
-                    service: s, image: image, layout: layout, portVariables: portVariables, freshRootfs: &freshRootfs, trace: trace,
+                    service: s, image: image, layout: layout, portVariables: portVariables, templates: templates, trace: trace,
                     foreground: s.name == foreground?.service ? foreground : nil, shares: shares
                 ))
             }

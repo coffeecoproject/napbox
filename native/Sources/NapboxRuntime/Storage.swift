@@ -1,6 +1,7 @@
 // napbox 在 ~/Library/Application Support/napbox/ 下放环境数据的位置：
 // environments/<环境 ID>/ 是各环境的根文件系统、数据卷和日志（里面的结构见 EnvironmentLayout），
-// recycled/ 是回收后保留 7 天的数据，builder/ 是构建引擎、构建缓存和构建日志。
+// recycled/ 是回收后保留 7 天的数据，builder/ 是构建引擎、构建缓存和构建日志，
+// rootfs-templates/ 是按镜像留着的根文件系统模板（RootfsTemplates）。
 import Foundation
 import NapboxCore
 import NapboxProtocol
