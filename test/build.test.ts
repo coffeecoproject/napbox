@@ -679,7 +679,8 @@ ${lines}
 `;
     writeFileSync(
       path.join(dir, "compose.yaml"),
-      `services:
+      `name: nbx-save
+services:
 ${service("built-intel", "    image: nbx-test-intel:v1\n    build: {context: .}\n    platform: linux/amd64")}${service("built-native", "    build: {context: .}")}${service("pulled-intel", "    image: alpine:3.20\n    platform: linux/amd64")}${service("pulled-native", "    image: alpine:3.20")}`,
     );
     await client.up({ cwd: dir, environment: {} });
@@ -725,7 +726,8 @@ ${service("built-intel", "    image: nbx-test-intel:v1\n    build: {context: .}\
     assert.deepEqual(
       result.images.map((i) => [i.service, i.image, i.platform]),
       [
-        ["built-native", "docker.io/library/intel-built-native:latest", "linux/arm64"],
+        // 没写 image：<compose 的项目名>-<服务名>，项目名是 compose 里写的 name，不是目录名（intel）
+        ["built-native", "docker.io/library/nbx-save-built-native:latest", "linux/arm64"],
         ["built-intel", "docker.io/library/nbx-test-intel:v1", "linux/amd64"],
         ["pulled-intel", "docker.io/library/alpine:3.20", "linux/amd64"],
       ],

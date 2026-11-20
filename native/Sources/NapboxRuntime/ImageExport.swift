@@ -9,11 +9,17 @@ import NapboxProtocol
 
 extension Runtime {
     /// - services：只导出这几个服务的；空是全部
-    /// - projectName：没写 image 的服务，包里的镜像叫 <项目名>-<服务名>:latest（和 docker compose build 一样）
+    /// - projectName：compose 的项目名（COMPOSE_PROJECT_NAME、compose 最外层的 name、compose 所在的目录名，前面的优先）。
+    ///   没写 image 的服务，包里的镜像叫 <项目名>-<服务名>:latest，和 docker compose build 一样
     /// - scratch：这次导出专用的名字，构建出来的镜像都放在它下面（和环境名一个用法），导出完就删
     public func saveImages(_ project: ComposeProject, services names: [String], projectName: String, scratch: String,
                            output: URL, access: HostAccess) async throws(NapboxError) -> [SavedImage] {
         let selected = try Self.select(names, in: project)
+        // 起不出名字的先报，不等构建完
+        if projectName.isEmpty, let unnamed = selected.first(where: { $0.image == nil }) {
+            throw NapboxError(.composeInvalid, "\(unnamed.name) 没写 image，compose 的项目名又是空的（目录名里没有字母、数字），"
+                + "起不出镜像名：给它写 image，或在 compose 最外层写 name")
+        }
         // 只构建要导出的：留下选中的服务，加上替它们构建镜像的服务（image 相同、写了 build 的那个）
         var needed = project
         let owners = Set(selected.compactMap { Images.buildOwner(of: $0, in: project)?.name })

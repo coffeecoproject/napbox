@@ -44,6 +44,12 @@ public struct ComposeRun: Sendable {
 
 public enum ComposeLoader {
     public static func load(_ input: ComposeInput) throws(ComposeError) -> ComposeProject {
+        try loadNamed(input).project
+    }
+
+    /// 连同 compose 的项目名一起给（规则见 projectName）。napbox save 给没写 image 的服务起镜像名时用它，
+    /// 和 docker compose build 起的名字一样；环境的名字不用它，由 napbox 按仓库目录自己起。
+    public static func loadNamed(_ input: ComposeInput) throws(ComposeError) -> (project: ComposeProject, name: String) {
         guard let first = input.files.first else { throw ComposeError([.invalid("没有指定 compose 文件")]) }
         let projectDirectory = first.deletingLastPathComponent()
         let access = input.access
@@ -107,7 +113,7 @@ public enum ComposeLoader {
         let project = builder.build(merged)
         guard builder.issues.isEmpty, var project else { throw ComposeError(builder.issues) }
         project.unsetVariables = interpolator.missing
-        return project
+        return (project, composeProjectName)
     }
 
     /// `${COMPOSE_PROJECT_NAME}` 的值，规则和 compose 一样：调用方环境或 .env 里给的；没给就是 compose 最外层的 name

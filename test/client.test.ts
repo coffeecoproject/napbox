@@ -203,6 +203,24 @@ describe("真实 napboxd：请求和错误码", () => {
     await rejectsWithCode(client.up({ cwd: repo, environment: {} }), "runtime_unavailable");
   });
 
+  // 这里没有内核，名字起得出来就走到准备镜像报 runtime_unavailable：报 compose_invalid 说明名字是先起的
+  test("save：没写 image 的服务用 compose 的项目名起镜像名（COMPOSE_PROJECT_NAME、compose 的 name、目录名），起不出来先报错", async () => {
+    // 目录名里没有字母、数字，照 compose 的规则项目名是空的
+    const build = "services:\n  app:\n    build: {context: .}\n";
+    const repo = gitRepo("项目", build);
+    writeFileSync(path.join(repo, "Dockerfile"), "FROM scratch\n");
+    const save = (environment: Record<string, string>) => client.save({ cwd: repo, environment, output: "images.tar", services: [] });
+    const error = await rejectsWithCode(save({}), "compose_invalid");
+    assert.match(error.message, /app 没写 image，compose 的项目名又是空的/);
+    await rejectsWithCode(save({ COMPOSE_PROJECT_NAME: "demo" }), "runtime_unavailable");
+    writeFileSync(path.join(repo, "compose.yaml"), "name: demo\n" + build);
+    await rejectsWithCode(save({}), "runtime_unavailable");
+    // 写了 image 的不用项目名
+    writeFileSync(path.join(repo, "compose.yaml"), "services:\n  app:\n    image: demo-app:v1\n    build: {context: .}\n");
+    await rejectsWithCode(save({}), "runtime_unavailable");
+    assert.equal(existsSync(path.join(repo, "images.tar")), false);
+  });
+
   test("create 带 confine：compose 用到代码目录以外的宿主机路径就报 path_outside_directory，不留登记；目录以内的照常往下走", async () => {
     const caller = { name: "codeos/confined", owner: "codeos", confine: true };
     const ssh = gitRepo("confine-ssh", 'services:\n  db:\n    image: postgres:17\n    volumes: ["~/.ssh:/root/.ssh:ro"]\n');

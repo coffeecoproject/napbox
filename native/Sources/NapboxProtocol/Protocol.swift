@@ -510,7 +510,7 @@ public struct SaveParams: Codable, Sendable {
 
 public struct SavedImage: Codable, Sendable {
     public var service: String
-    /// 包里这个镜像的名字：服务写了 image 就是它，没写是 <项目名>-<服务名>:latest
+    /// 包里这个镜像的名字：服务写了 image 就是它，没写是 <compose 的项目名>-<服务名>:latest
     public var image: String
     /// 包里这个镜像的 digest（外层那份只含一个架构的 index）。Docker 用 containerd 镜像库时，docker image load
     /// 之后的镜像 ID 就是它，可以拿它当不会变的名字用

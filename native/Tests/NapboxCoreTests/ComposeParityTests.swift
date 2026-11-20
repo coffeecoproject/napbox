@@ -89,6 +89,16 @@ import NapboxProtocol
         // 都没给：项目目录名（withProject 建的是 napbox-test-<UUID>），小写
         let fromDirectory = try #require(try value(["compose.yaml": compose]))
         #expect(fromDirectory.hasPrefix("napbox-test-") && fromDirectory == fromDirectory.lowercased())
+
+        // loadNamed 给出的就是这个名字（napbox save 给没写 image 的服务起镜像名用）
+        func named(_ files: [String: String], env: [String: String] = [:]) throws -> String {
+            try withProject(files) { dir in
+                try ComposeLoader.loadNamed(ComposeInput(files: [dir.appending(path: "compose.yaml")], callerEnvironment: env)).name
+            }
+        }
+        #expect(try named(["compose.yaml": "name: demo\n" + compose]) == "demo")
+        #expect(try named(["compose.yaml": "name: demo\n" + compose], env: ["COMPOSE_PROJECT_NAME": "from-shell"]) == "from-shell")
+        #expect(try named(["compose.yaml": compose]).hasPrefix("napbox-test-"))
     }
 
     @Test func composeFileVariable() throws {

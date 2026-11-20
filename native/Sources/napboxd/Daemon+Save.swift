@@ -10,14 +10,19 @@ extension Daemon {
         let location = try await Blocking.run { () throws(NapboxError) in try WorktreeLocation.locate(from: cwd) }
         try requireNotCallerDirectory(location.worktree.path)
         let files = try ComposeFiles.resolve(explicit: params.files, environment: params.environment, cwd: cwd, worktree: location.worktree)
-        let project = try loadCompose(files, environment: params.environment, profiles: params.profiles)
+        let project: ComposeProject, projectName: String
+        do {
+            (project, projectName) = try ComposeLoader.loadNamed(
+                ComposeInput(files: files, callerEnvironment: params.environment, profiles: params.profiles))
+        } catch {
+            throw error.napboxError
+        }
         // 报回去的路径照调用方的写法（standardizedFileURL 会去掉开头的 /private）
         let output = URL(fileURLWithPath: PathText.normalized(params.output.hasPrefix("/") ? params.output : params.cwd + "/" + params.output))
         // 构建出来的镜像放在这次导出自己的名字下面，和开发环境、别的导出都不相干；这个名字不登记成环境
         let scratch = "\(store.state.environmentName(for: location))#save-\(UUID().uuidString.lowercased().prefix(8))"
         let images = try await runtime.saveImages(
-            project, services: params.services, projectName: store.state.projectName(for: location.mainRepository),
-            scratch: scratch, output: output, access: .open
+            project, services: params.services, projectName: projectName, scratch: scratch, output: output, access: .open
         )
         return SaveResult(output: output.path, images: images)
     }
