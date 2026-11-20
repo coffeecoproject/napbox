@@ -10,10 +10,13 @@ export {
   type Output,
   type RunOptions,
   type SubscribeOptions,
+  type SaveOptions,
   type UpOptions,
 } from "./client.ts";
 export {
   type DownResult,
+  type SavedImage,
+  type SaveResult,
   type EgressMode,
   type EnvironmentEvent,
   type EnvironmentInfo,

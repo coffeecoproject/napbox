@@ -19,10 +19,10 @@ struct ComposeBuilder {
     private static let serviceKeys: Set<String> = [
         "image", "build", "command", "entrypoint", "environment", "env_file", "working_dir", "init", "shm_size",
         "tmpfs", "pull_policy", "stop_grace_period", "container_name", "expose", "ports", "volumes", "depends_on",
-        "healthcheck", "restart", "profiles", "networks", "mem_limit", "deploy", "develop", "secrets", "x-napbox",
+        "healthcheck", "restart", "profiles", "networks", "mem_limit", "deploy", "develop", "secrets", "platform", "x-napbox",
     ]
     private static let networkKeys: Set<String> = ["cap_add", "privileged", "network_mode"]
-    private static let deploymentKeys: Set<String> = ["platform", "logging", "cpus", "pids_limit", "cap_drop", "security_opt", "read_only"]
+    private static let deploymentKeys: Set<String> = ["logging", "cpus", "pids_limit", "cap_drop", "security_opt", "read_only"]
 
     mutating func build(_ root: YAMLTree) -> ComposeProject? {
         guard let top = root.entries else {
@@ -267,6 +267,14 @@ struct ComposeBuilder {
                 case "build": s.pullPolicy = .build
                 case let other?: issues.append(.unsupported("\(p)：\(other) 第一版不支持（支持 always、never、missing、build）"))
                 case nil: break
+                }
+            case "platform":
+                if let value = scalar(v, p) {
+                    if let platform = ImagePlatform(compose: value) {
+                        s.platform = platform
+                    } else {
+                        issues.append(.unsupported("\(p)：\(value) 不支持（支持 linux/arm64、linux/amd64）"))
+                    }
                 }
             case "stop_grace_period": s.stopGracePeriodSeconds = duration(v, p)
             case "container_name": break // napbox 自己给容器命名，否则同一个项目开两个 worktree 会重名

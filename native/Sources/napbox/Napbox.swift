@@ -12,7 +12,7 @@ struct Napbox: ParsableCommand {
         abstract: "给 agent 用的本地开发环境。",
         discussion: "npm 包里的 napbox 还有 setup [claude|codex]：准备内核、注册后台程序 napboxd，可以顺便把 MCP 服务加进 agent。",
         version: NapboxVersion.current,
-        subcommands: [Up.self, Run.self, Env.self, Logs.self, Exec.self, Reset.self, Sleep.self, Egress.self, Down.self, Status.self]
+        subcommands: [Up.self, Run.self, Save.self, Env.self, Logs.self, Exec.self, Reset.self, Sleep.self, Egress.self, Down.self, Status.self]
     )
 
     /// 替换 ArgumentParser 默认的入口：它把错误按文本打印，退出码也不统一。
@@ -92,6 +92,32 @@ struct Up: ParsableCommand {
             environment: ProcessInfo.processInfo.environment, build: build, temp: temp
         )
         try Output.json(try Output.call(Method.up, params: try Wire.value(params), as: EnvironmentInfo.self))
+    }
+}
+
+struct Save: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        abstract: "把 compose 里服务的镜像导出成一个 tar（docker image load 能读）：写了 build 的先构建，其余的拉下来。不起环境，不碰开发环境。要发到 x86 服务器的镜像，在服务上写 platform: linux/amd64。"
+    )
+
+    @Option(name: .shortAndLong, help: "compose 文件，可以写多次，按顺序合并。不写就自动查找。")
+    var file: [String] = []
+
+    @Option(name: .long, help: "启用的 profile，可以写多次。")
+    var profile: [String] = []
+
+    @Option(name: .shortAndLong, help: "写到哪个文件，已有的会被换掉。")
+    var output: String
+
+    @Argument(help: "只导出这几个服务的镜像；不写是所有服务的")
+    var services: [String] = []
+
+    func run() throws {
+        let params = SaveParams(
+            cwd: FileManager.default.currentDirectoryPath, files: file, profiles: profile,
+            environment: ProcessInfo.processInfo.environment, output: output, services: services
+        )
+        try Output.json(try Output.call(Method.save, params: try Wire.value(params), as: SaveResult.self))
     }
 }
 

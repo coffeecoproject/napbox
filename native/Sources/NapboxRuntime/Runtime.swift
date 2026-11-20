@@ -11,6 +11,11 @@ import Virtualization
 
 let linuxArm64 = Platform(arch: "arm64", os: "linux", variant: "v8")
 
+extension ImagePlatform {
+    /// 镜像库和解包用的写法。虚拟机、构建引擎、网络小容器一直是 arm64；只有服务的镜像按 compose 的 platform 来
+    var oci: Platform { self == .amd64 ? Platform(arch: "amd64", os: "linux") : linuxArm64 }
+}
+
 public actor Runtime {
     let supportDirectory: URL
     let storage: Storage
@@ -130,14 +135,14 @@ public actor Runtime {
     public func buildImages(_ project: ComposeProject, environment name: String, force: Bool,
                             access: HostAccess) async throws(NapboxError) -> Bool {
         let id = EnvironmentRecord.id(of: name)
-        var builds: [(reference: String, build: Build, service: String, always: Bool)] = []
+        var builds: [(reference: String, build: Build, service: String, platform: ImagePlatform, always: Bool)] = []
         for s in project.services {
             guard let build = s.build else { continue }
-            let reference = try Images.builtReference(environment: id, build: build)
+            let reference = try Images.builtReference(environment: id, build: build, platform: s.imagePlatform)
             if let i = builds.firstIndex(where: { $0.reference == reference }) {
                 if s.pullPolicy == .build { builds[i].always = true }
             } else {
-                builds.append((reference, build, s.name, s.pullPolicy == .build))
+                builds.append((reference, build, s.name, s.imagePlatform, s.pullPolicy == .build))
             }
         }
         guard !builds.isEmpty else { return false }
@@ -147,11 +152,11 @@ public actor Runtime {
             let existing = try? await store.get(reference: b.reference)
             if existing != nil, !force, !b.always { continue }
             var before: String?
-            if let existing { before = try? await Images.platformDigest(existing) }
-            let request = ImageBuilder.Request(reference: b.reference, build: b.build, service: b.service,
+            if let existing { before = try? await Images.platformDigest(existing, b.platform) }
+            let request = ImageBuilder.Request(reference: b.reference, build: b.build, platform: b.platform, service: b.service,
                                                log: storage.buildLog(environment: id, service: b.service), access: access)
             let image = try await builder.build(request, store: store, vmm: vmm)
-            if try await Images.platformDigest(image) != before { changed = true }
+            if try await Images.platformDigest(image, b.platform) != before { changed = true }
         }
         // 重新构建后旧版本的层没人用了。根文件系统是解包出来的独立文件，在跑的环境不受影响
         if changed { _ = try? await store.cleanUpOrphanedBlobs() }
@@ -163,8 +168,9 @@ public actor Runtime {
 
     /// 环境回收时删掉它构建出来的镜像和构建日志。要再用时重新构建，有缓存，不用从头来。
     /// 按环境名找：临时环境第一次起就失败时还没有登记，构建出来的也要删。
-    public func removeBuiltImages(environment name: String) async throws(NapboxError) {
-        try await removeBuilds(id: EnvironmentRecord.id(of: name))
+    /// - keepLogs：构建失败时留着日志给人看（报错里写了它的位置），napboxd 下次启动时删（removeLeftoverBuilds）
+    public func removeBuiltImages(environment name: String, keepLogs: Bool = false) async throws(NapboxError) {
+        try await removeBuilds(id: EnvironmentRecord.id(of: name), keepLogs: keepLogs)
     }
 
     /// napboxd 启动时：登记里没有的环境留下的构建结果和构建日志都删掉（构建到一半 napboxd 被杀、
@@ -185,7 +191,7 @@ public actor Runtime {
     }
 
     /// 镜像删成了才删构建日志：日志是找到这些镜像的线索，镜像删不掉时留着，下次还能再找
-    private func removeBuilds(id: String) async throws(NapboxError) {
+    private func removeBuilds(id: String, keepLogs: Bool = false) async throws(NapboxError) {
         let (store, _) = try await prepare()
         let prefix = Images.builtPrefix(environment: id)
         do {
@@ -197,7 +203,7 @@ public actor Runtime {
         } catch {
             throw NapboxError(.internalError, "\(error)")
         }
-        try? FileManager.default.removeItem(at: storage.buildLogs(environment: id))
+        if !keepLogs { try? FileManager.default.removeItem(at: storage.buildLogs(environment: id)) }
     }
 
     /// 起一个环境：准备镜像、根文件系统、数据卷，创建 pod，按依赖顺序启动，等全部就绪。
@@ -218,7 +224,7 @@ public actor Runtime {
         for s in composeProject.services {
             let image = try await Images.forStart(s, project: composeProject, environment: record.id, store: store)
             images[s.name] = image
-            declared[s.name] = try await Images.declaredVolumes(image)
+            declared[s.name] = try await Images.declaredVolumes(image, s.imagePlatform)
         }
         let project = composeProject.withImageVolumes(declared)
         guard let ip = record.ip else { throw NapboxError(.internalError, "环境 \(record.name) 没有分配 IP") }
@@ -243,7 +249,7 @@ public actor Runtime {
         do throws(NapboxError) {
             for s in project.services {
                 guard let image = images[s.name] else { throw NapboxError(.internalError, "\(s.name) 的镜像没有准备") }
-                trace.image(s.name, reference: image.reference, digest: image.digest, platformDigest: try await Images.platformDigest(image))
+                trace.image(s.name, reference: image.reference, digest: image.digest, platformDigest: try await Images.platformDigest(image, s.imagePlatform))
                 containers.append(try await ContainerPlan(
                     service: s, image: image, layout: layout, portVariables: portVariables, freshRootfs: &freshRootfs, trace: trace,
                     foreground: s.name == foreground?.service ? foreground : nil, shares: shares

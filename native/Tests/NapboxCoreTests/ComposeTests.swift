@@ -146,6 +146,23 @@ extension [ComposeIssue] {
         #expect(p.services[1].memoryShareBytes == 2 * 1024 * 1024 * 1024)
     }
 
+    @Test func platformPicksTheImageArchitecture() throws {
+        let p = try load(["compose.yaml": """
+        services:
+          native: {image: alpine}
+          arm: {image: alpine, platform: linux/arm64}
+          armv8: {image: alpine, platform: linux/arm64/v8}
+          intel: {image: alpine, platform: linux/amd64}
+        """])
+        // 没写的不记：服务的定义不变，已有环境的根文件系统不会因为升级重建
+        #expect(p.services.map(\.name) == ["arm", "armv8", "intel", "native"])
+        #expect(p.services.map(\.platform) == [.arm64, .arm64, .amd64, nil])
+        #expect(p.services.map(\.imagePlatform) == [.arm64, .arm64, .amd64, .arm64])
+        let found = try issues(["compose.yaml": "services:\n  a:\n    image: alpine\n    platform: linux/riscv64\n"])
+        #expect(found.mentions("services.a.platform：linux/riscv64 不支持（支持 linux/arm64、linux/amd64）"))
+        #expect(found.count == 1)
+    }
+
     @Test func unsupportedKeysAreErrors() throws {
         let found = try issues(["compose.yaml": """
         services:
@@ -154,13 +171,13 @@ extension [ComposeIssue] {
             cap_add: [NET_ADMIN]
             privileged: true
             network_mode: host
-            platform: linux/amd64
+            read_only: true
             labels: {x: y}
         """])
         #expect(found.mentions("services.a.cap_add：会让服务改动网络规则"))
         #expect(found.mentions("services.a.privileged：会让服务改动网络规则"))
         #expect(found.mentions("services.a.network_mode：会让服务改动网络规则"))
-        #expect(found.mentions("services.a.platform：第一版不支持（多用在 staging"))
+        #expect(found.mentions("services.a.read_only：第一版不支持（多用在 staging"))
         #expect(found.mentions("services.a.labels：第一版不支持"))
         #expect(found.count == 5)
         #expect(found.allSatisfy { if case .unsupported = $0 { true } else { false } })

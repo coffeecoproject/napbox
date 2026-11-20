@@ -19,6 +19,8 @@ import {
   CreateParams,
   DownResult,
   type DownParams,
+  SaveResult,
+  type SaveParams,
   EmptyResult,
   EnvironmentInfo,
   type EgressMode,
@@ -83,6 +85,9 @@ export const CONFINE_SINCE = "0.1.7";
 /** up 的 environment 必须给：compose 变量替换用哪些变量由调用方决定（命令行给的是它自己的环境变量） */
 export type UpOptions = Pick<UpParams, "cwd" | "environment"> &
   Partial<Pick<UpParams, "files" | "profiles" | "build" | "temp">>;
+
+export type SaveOptions = Pick<SaveParams, "cwd" | "environment" | "output"> &
+  Partial<Pick<SaveParams, "files" | "profiles" | "services">>;
 
 /** 起一个临时环境，在前台跑其中一个服务，跑完销毁。command 不写就用 compose 里写的 */
 export type RunOptions = Pick<RunParams, "cwd" | "environment" | "service"> &
@@ -158,6 +163,16 @@ export class NapboxClient {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * 把 compose 里服务的镜像导出成一个 tar（`docker image load` 能读）：写了 build 的先构建，其余的拉下来。
+   * 不起环境。要发到 x86 服务器的镜像，在服务上写 `platform: linux/amd64`。
+   */
+  save(options: SaveOptions): Promise<SaveResult> {
+    const { cwd, environment, output, files = [], profiles = [], services = [] } = options;
+    const params: SaveParams = { cwd, files, profiles, environment, output, services };
+    return this.exchange({ method: methods.save, params, result: SaveResult });
   }
 
   status(): Promise<StatusResult> {

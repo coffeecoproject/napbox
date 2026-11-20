@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -653,5 +654,111 @@ volumes:
     await client.up({ cwd: dir, environment: {} });
     assert.equal(await sh("keeper", "ls /vol/again.txt 2>/dev/null || echo gone"), "gone\n");
     assert.equal(await sh("keeper", "cat /vol/sub/seed.txt"), "seed\n");
+  });
+});
+
+// platform: linux/amd64 的服务：镜像拉的、构建的都是 x86 的，在虚拟机里由 Rosetta 执行。给要发到 x86 服务器的
+// 镜像用：napbox save 把它们导出成 docker image load 能读的 tar，不起环境。
+describe("linux/amd64 的镜像和 napbox save", { concurrency: false }, () => {
+  const dir = path.join(work, "intel");
+  const target = { cwd: dir };
+  let daemon: Daemon;
+  let client: NapboxClient;
+
+  before(async () => {
+    daemon = await startDaemon(support, log);
+    client = daemon.client;
+    mkdirSync(dir, { recursive: true });
+    execFileSync("git", ["init", "-q", dir]);
+    // RUN 在构建时执行：记下它当时是什么架构
+    writeFileSync(path.join(dir, "Dockerfile"), "FROM alpine:3.20\nRUN uname -m > /built-on.txt\n");
+    const service = (name: string, lines: string) => `  ${name}:
+${lines}
+    command: ["sleep", "100000"]
+    stop_grace_period: 1s
+`;
+    writeFileSync(
+      path.join(dir, "compose.yaml"),
+      `services:
+${service("built-intel", "    image: nbx-test-intel:v1\n    build: {context: .}\n    platform: linux/amd64")}${service("built-native", "    build: {context: .}")}${service("pulled-intel", "    image: alpine:3.20\n    platform: linux/amd64")}${service("pulled-native", "    image: alpine:3.20")}`,
+    );
+    await client.up({ cwd: dir, environment: {} });
+  });
+  after(async () => {
+    await client.down(target).catch(() => {});
+    await daemon.stop("SIGTERM");
+  });
+
+  async function sh(service: string, command: string): Promise<string> {
+    let text = "";
+    const { exitCode } = await client.exec({
+      target,
+      service,
+      command: ["sh", "-c", command],
+      onOutput: (o) => {
+        text += Buffer.from(o.data).toString();
+      },
+    });
+    assert.equal(exitCode, 0, `${service} 里 ${command}：${text}`);
+    return text;
+  }
+
+  test("写了 platform: linux/amd64 的服务构建和运行都是 x86 的，没写的还是 arm；同一个镜像名两种架构各用各的", async () => {
+    assert.equal(await sh("built-intel", "cat /built-on.txt; uname -m"), "x86_64\nx86_64\n");
+    assert.equal(await sh("built-native", "cat /built-on.txt; uname -m"), "aarch64\naarch64\n");
+    assert.equal(await sh("pulled-intel", "uname -m"), "x86_64\n");
+    assert.equal(await sh("pulled-native", "uname -m"), "aarch64\n");
+  });
+
+  test("save：构建并导出成一个 tar，名字照 compose，digest 是包里外层那份 index 的；不起环境，构建出来的不留", async () => {
+    const output = path.join(work, "images.tar");
+    writeFileSync(output, "原来的内容");
+    const logs = () => readdirSync(path.join(support, "builder/logs")).sort();
+    const [environmentsBefore, logsBefore] = [(await client.status()).environments.map((e) => e.name), logs()];
+    const result = await client.save({
+      cwd: dir,
+      environment: {},
+      output: "../images.tar",
+      services: ["built-intel", "built-native", "pulled-intel"],
+    });
+    assert.equal(result.output, output);
+    assert.deepEqual(
+      result.images.map((i) => [i.service, i.image, i.platform]),
+      [
+        ["built-native", "docker.io/library/intel-built-native:latest", "linux/arm64"],
+        ["built-intel", "docker.io/library/nbx-test-intel:v1", "linux/amd64"],
+        ["pulled-intel", "docker.io/library/alpine:3.20", "linux/amd64"],
+      ],
+    );
+    // 包里是 OCI 镜像布局：index.json 每条一个镜像，指向只含一个架构的 index，再指向那个架构的 manifest
+    const unpacked = path.join(work, "unpacked");
+    mkdirSync(unpacked);
+    execFileSync("tar", ["-xf", output, "-C", unpacked]);
+    const blob = (digest: string) => JSON.parse(readFileSync(path.join(unpacked, "blobs/sha256", digest.slice("sha256:".length)), "utf8"));
+    assert.deepEqual(JSON.parse(readFileSync(path.join(unpacked, "oci-layout"), "utf8")), { imageLayoutVersion: "1.0.0" });
+    const entries = JSON.parse(readFileSync(path.join(unpacked, "index.json"), "utf8")).manifests;
+    assert.equal(entries.length, 3);
+    for (const image of result.images) {
+      const entry = entries.find((e: { digest: string }) => e.digest === image.digest);
+      // docker 认 ref.name，containerd 认 io.containerd.image.name
+      assert.equal(entry?.annotations["org.opencontainers.image.ref.name"], image.image, image.service);
+      assert.equal(entry?.annotations["io.containerd.image.name"], image.image, image.service);
+      const inner = blob(image.digest).manifests;
+      assert.equal(inner.length, 1, `${image.service} 只带自己那个架构`);
+      const config = blob(blob(inner[0].digest).config.digest);
+      assert.equal(`${config.os}/${config.architecture}`, image.platform, image.service);
+    }
+    // 没有多出环境，这次构建的日志和镜像也没留下；开发环境照常
+    assert.deepEqual((await client.status()).environments.map((e) => e.name), environmentsBefore);
+    assert.deepEqual(logs(), logsBefore);
+    assert.equal(await sh("built-intel", "uname -m"), "x86_64\n");
+  });
+
+  test("save：服务名不存在直接报错，原来的文件不动", async () => {
+    const output = path.join(work, "kept.tar");
+    writeFileSync(output, "原来的内容");
+    const error = await rejectsWithCode(client.save({ cwd: dir, environment: {}, output, services: ["nope"] }), "compose_invalid");
+    assert.match(error.message, /没有服务 nope/);
+    assert.equal(readFileSync(output, "utf8"), "原来的内容");
   });
 });

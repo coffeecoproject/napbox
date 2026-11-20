@@ -14,6 +14,8 @@ actor ImageBuilder {
         /// 构建结果的镜像名
         var reference: String
         var build: Build
+        /// 构建成哪个架构的镜像
+        var platform: ImagePlatform
         /// 报错时说是哪个服务
         var service: String
         /// 完整的构建输出写到这里，每次构建覆盖
@@ -289,7 +291,11 @@ actor ImageBuilder {
         }
         try await pod.addContainer(Self.container, rootfs: rootfs) { c in
             c.process = LinuxProcessConfiguration(from: config)
-            c.process.arguments = ["buildkitd", "--addr", "unix:///run/buildkit/buildkitd.sock"]
+            // 先删掉引擎自带的 x86 模拟器（qemu）再启动。构建 linux/amd64 的镜像时，RUN 里的 x86 程序该由虚拟机里登记好的
+            // Rosetta 执行；可是引擎启动时自己试一遍（在 chroot 里跑测试程序）认不出 Rosetta，就改用自带的 qemu，
+            // 它慢，有的程序在里面直接崩（比如 tsc 段错误）。自带的没了，RUN 就直接执行，交给 Rosetta。
+            // 苹果的 container 也是这么做的。这块盘每次构建都沿用，rm -f 删过了也不报错
+            c.process.arguments = ["/bin/sh", "-c", "rm -f /usr/bin/buildkit-qemu-x86_64 && exec buildkitd --addr unix:///run/buildkit/buildkitd.sock"]
             // 引擎自己再起容器跑 RUN，要全部权限和不被遮挡的 /proc、/sys；它和宿主机之间还隔着这个虚拟机
             c.process.capabilities = .allCapabilities
             c.process.stdout = engineLog
@@ -315,6 +321,7 @@ actor ImageBuilder {
         var arguments = [
             "buildctl", "build", "--progress", "plain", "--frontend", "dockerfile.v0",
             "--local", "context=/ctx", "--local", "dockerfile=/dockerfile", "--opt", "filename=\(dockerfile.name)",
+            "--opt", "platform=\(request.platform.rawValue)",
         ]
         if let target = request.build.target { arguments += ["--opt", "target=\(target)"] }
         for (key, value) in request.build.args.sorted(by: { $0.key < $1.key }) {

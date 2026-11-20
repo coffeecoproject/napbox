@@ -136,6 +136,8 @@ actor Daemon {
                 return try Wire.value(try await reset(try Requests.params(ResetParams.self, request)))
             case Method.down:
                 return try Wire.value(try await down(try Requests.params(DownParams.self, request)))
+            case Method.save:
+                return try Wire.value(try await save(try Requests.params(SaveParams.self, request)))
             default:
                 throw Requests.unknownMethod(request)
             }

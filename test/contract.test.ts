@@ -159,6 +159,9 @@ const counterparts: Record<string, z.ZodType> = {
   ResetParams: protocol.ResetParams,
   EgressParams: protocol.EgressParams,
   DownResult: protocol.DownResult,
+  SaveParams: protocol.SaveParams,
+  SavedImage: protocol.SavedImage,
+  SaveResult: protocol.SaveResult,
   StreamOutput: protocol.StreamOutput,
   "StreamOutput.Stream": protocol.OutputStream,
   StdinMessage: protocol.StdinMessage,
@@ -238,6 +241,7 @@ test("每个方法客户端都有对应的调用", () => {
     create: "create",
     wake: "wake",
     runs: "runs",
+    save: "save",
   };
   for (const name of Object.values(clientMethod)) {
     assert.equal(typeof NapboxClient.prototype[name], "function", name);

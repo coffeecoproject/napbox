@@ -61,7 +61,7 @@ struct ContainerPlan: Sendable {
         imageCreated = settings.created
         arguments = settings.arguments
         stopSignal = settings.stopSignal
-        let prepared = try await layout.rootfs(s.name, image: image, definition: try Self.definition(s), fresh: &freshRootfs)
+        let prepared = try await layout.rootfs(s.name, image: image, platform: s.imagePlatform, definition: try Self.definition(s), fresh: &freshRootfs)
         rootfs = prepared.mount
         trace.rootfs(s.name, prepared.source)
 
@@ -168,7 +168,7 @@ struct ImageSettings: Sendable {
 
     init(service s: Service, image: Containerization.Image) async throws(NapboxError) {
         do {
-            let config = try await image.config(for: linuxArm64)
+            let config = try await image.config(for: s.imagePlatform.oci)
             self.config = config.config ?? ImageConfig()
             created = config.created
         } catch {

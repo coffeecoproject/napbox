@@ -67,6 +67,9 @@ public struct Service: Codable, Equatable, Sendable {
     public var keepAwake: Bool
     /// develop.watch
     public var watch: [WatchRule] = []
+    /// platform：镜像拉哪个架构的、构建成哪个架构的。没写是 linux/arm64（本机的架构）
+    public var platform: ImagePlatform? = nil
+    public var imagePlatform: ImagePlatform { platform ?? .arm64 }
 
     /// 没写上限的服务给虚拟机算的内存：虚拟机的内存是各服务这一份加起来，没写上限的服务在里面共用
     public static let sharedMemoryShareBytes: UInt64 = 1024 * 1024 * 1024
@@ -106,6 +109,21 @@ public struct Build: Codable, Equatable, Sendable {
     public var dockerfile: String?
     public var target: String?
     public var args: [String: String]
+}
+
+/// 服务的镜像架构。linux/amd64 的服务在虚拟机里由 Rosetta 执行，用来在本机构建、运行要发到 x86 服务器的镜像
+public enum ImagePlatform: String, Codable, Sendable {
+    case arm64 = "linux/arm64"
+    case amd64 = "linux/amd64"
+
+    /// compose 里的写法：linux/arm64 也可以带 variant（linux/arm64/v8）
+    public init?(compose value: String) {
+        switch value {
+        case "linux/arm64", "linux/arm64/v8": self = .arm64
+        case "linux/amd64": self = .amd64
+        default: return nil
+        }
+    }
 }
 
 public enum PullPolicy: String, Codable, Sendable {

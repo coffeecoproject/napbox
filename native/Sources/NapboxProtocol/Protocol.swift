@@ -137,6 +137,8 @@ public enum Method {
     public static let wake = "wake"
     /// 环境的运行记录
     public static let runs = "runs"
+    /// 按 compose 构建、拉好镜像，导出成 docker image load 能读的 tar，不起环境
+    public static let save = "save"
 }
 
 // MARK: - status
@@ -479,6 +481,59 @@ public struct DownResult: Codable, Sendable {
         self.name = name
         self.releasedPorts = releasedPorts
         self.keptDataAt = keptDataAt
+    }
+}
+
+// MARK: - save
+
+/// 把 compose 里服务的镜像导出成一个 tar（docker image load 能读）：写了 build 的先构建，其余按 pull_policy 拉。
+/// 不起环境，不碰这个 worktree 的开发环境；构建出来的镜像导出后就删，构建缓存留着。
+public struct SaveParams: Codable, Sendable {
+    public var cwd: String
+    public var files: [String]
+    public var profiles: [String]
+    public var environment: [String: String]
+    /// 写到哪个文件（相对 cwd），已有的会被换掉
+    public var output: String
+    /// 只导出这几个服务的镜像；空是 compose 里（启用的 profile 下）所有服务的
+    public var services: [String]
+
+    public init(cwd: String, files: [String], profiles: [String], environment: [String: String], output: String, services: [String]) {
+        self.cwd = cwd
+        self.files = files
+        self.profiles = profiles
+        self.environment = environment
+        self.output = output
+        self.services = services
+    }
+}
+
+public struct SavedImage: Codable, Sendable {
+    public var service: String
+    /// 包里这个镜像的名字：服务写了 image 就是它，没写是 <项目名>-<服务名>:latest
+    public var image: String
+    /// 包里这个镜像的 digest（外层那份只含一个架构的 index）。Docker 用 containerd 镜像库时，docker image load
+    /// 之后的镜像 ID 就是它，可以拿它当不会变的名字用
+    public var digest: String
+    /// linux/arm64 或 linux/amd64
+    public var platform: String
+
+    public init(service: String, image: String, digest: String, platform: String) {
+        self.service = service
+        self.image = image
+        self.digest = digest
+        self.platform = platform
+    }
+}
+
+public struct SaveResult: Codable, Sendable {
+    /// 写好的文件，绝对路径
+    public var output: String
+    public var images: [SavedImage]
+
+    public init(output: String, images: [SavedImage]) {
+        self.output = output
+        self.images = images
     }
 }
 

@@ -140,9 +140,9 @@ extension Build {
 }
 
 /// 只按写法处理路径，不碰文件系统。Foundation 的 standardizedFileURL 会把开头的 /private 去掉，真实路径就对不上了
-enum PathText {
+public enum PathText {
     /// 去掉 `.`、空段，`..` 往上一层
-    static func normalized(_ path: String) -> String {
+    public static func normalized(_ path: String) -> String {
         var parts: [Substring] = []
         for part in path.split(separator: "/") {
             switch part {

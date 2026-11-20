@@ -51,6 +51,7 @@ export const methods = {
   create: "create",
   wake: "wake",
   runs: "runs",
+  save: "save",
 } as const;
 
 // code 不收窄成 errorCodes：新版 napboxd 加的错误码也要原样带给调用方
@@ -180,6 +181,26 @@ export const DownResult = z.object({
   keptDataAt: z.string().optional(),
 });
 
+/** 把 compose 里服务的镜像导出成一个 tar（docker image load 能读）。services 空是全部服务 */
+export const SaveParams = z.object({
+  cwd: z.string(),
+  files: z.array(z.string()),
+  profiles: z.array(z.string()),
+  environment: z.record(z.string(), z.string()),
+  output: z.string(),
+  services: z.array(z.string()),
+});
+
+/** digest：包里这个镜像的 digest，Docker 用 containerd 镜像库时就是 docker image load 之后的镜像 ID */
+export const SavedImage = z.object({
+  service: z.string(),
+  image: z.string(),
+  digest: z.string(),
+  platform: z.string(),
+});
+
+export const SaveResult = z.object({ output: z.string(), images: z.array(SavedImage) });
+
 export const StreamOutput = z.object({ stream: OutputStream, data: base64 });
 export const StdinMessage = z.object({ data: base64.optional(), end: z.boolean().optional() });
 
@@ -288,6 +309,9 @@ export type RunParams = z.infer<typeof RunParams>;
 export type CreateParams = z.infer<typeof CreateParams>;
 export type DownParams = z.infer<typeof DownParams>;
 export type DownResult = z.infer<typeof DownResult>;
+export type SaveParams = z.infer<typeof SaveParams>;
+export type SavedImage = z.infer<typeof SavedImage>;
+export type SaveResult = z.infer<typeof SaveResult>;
 export type LogsResult = z.infer<typeof LogsResult>;
 export type ExecResult = z.infer<typeof ExecResult>;
 export type ServiceRun = z.infer<typeof ServiceRun>;
