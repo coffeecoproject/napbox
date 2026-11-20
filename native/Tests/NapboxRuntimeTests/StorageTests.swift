@@ -290,5 +290,8 @@ struct StopOutcomeTests {
             + "先看服务日志里停下那段为什么慢，确实要这么久的再在 compose 里设更长的 stop_grace_period")
         #expect(StopOutcome(syncFailed: true, timeLimit: 73).problem == "存盘（sync）失败；停了 73 秒还没停完，直接关掉了虚拟机")
         #expect(StopOutcome(vmGone: true).problem == "停之前虚拟机已经不在了")
+        // 最后关虚拟机那一步报了错：不算正常停下（不拍快照）
+        let shutdown = StopOutcome(shutdownFailed: "boom")
+        #expect(!shutdown.clean && shutdown.problem == "最后关虚拟机那一步报错：boom")
     }
 }

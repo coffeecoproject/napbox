@@ -1343,28 +1343,63 @@ volumes:
 
   test("启动过程中虚拟机没了：马上报错，不等到超时", async () => {
     await client.sleep(target);
+    // 刚休眠的那台虚拟机的进程可能还没退：等它没了再起，不然下面会把它认成新起的那台
+    const noVM = () => waitUntil("虚拟机进程退掉", () => ownVMs().length === 0, 10_000);
+    await noVM();
     const starting = { name: "codeos/vmlost-start", owner: "codeos" };
     const never = repo(
       "vmlost/never",
       `services:
   app:
     image: alpine:3.20
-    command: ["sleep", "100000"]
+    command: ["sh", "-c", "echo vmlost-start-up; exec sleep 100000"]
     ports: ["8080"]
     stop_grace_period: 1s
 `,
     );
-    const creating = client.create({ ...starting, directory: never });
-    creating.catch(() => {});
-    await waitUntil("虚拟机起来了", () => ownVMs().length === 1, 30_000);
-    await delay(1_500); // 等它走到等端口监听那一步
-    process.kill(ownVM(), "SIGKILL");
-    const killedAt = Date.now();
-    const error = await rejectsWithCode(creating, "runtime_unavailable");
-    assert.match(error.message, /虚拟机/);
-    assert.ok(Date.now() - killedAt < 5_000, `等了 ${Date.now() - killedAt}ms 才报错`);
-    assert.equal(await stateOf(starting), "sleeping");
-    await client.down(starting);
+    // 服务不监听 8080，起环境会停在等端口监听那一步。等服务输出了那行字再杀：这时虚拟机一定已经建完。
+    // 不按“虚拟机进程出现后多少毫秒”来杀：那样可能落在创建虚拟机的过程里，那一段虚拟机没了 create 不返回
+    // （已知问题，notes/DESIGN.md「外部报告核实后的几项修改」），对时、起网络小容器那几步也就没法自动测
+    const up = () =>
+      readdirSync(path.join(support, "environments")).some((id) => {
+        const log = path.join(support, "environments", id, "logs", "app.log");
+        return existsSync(log) && readFileSync(log, "utf8").includes("vmlost-start-up");
+      });
+    // 两个时机都跑完再断言：一次就能看到每个时机各报了什么
+    const wrong: string[] = [];
+    for (const wait of [0, 1_000]) {
+      const creating = client.create({ ...starting, directory: never });
+      await waitUntil("服务起来了", up, 30_000);
+      await delay(wait);
+      process.kill(ownVM(), "SIGKILL");
+      const killedAt = Date.now();
+      const stuck = "30 秒没返回";
+      const outcome = await Promise.race([
+        creating.then(
+          () => "起成了",
+          (e: unknown) => e as Error & { code?: string },
+        ),
+        delay(30_000).then(() => stuck),
+      ]);
+      const took = Date.now() - killedAt;
+      const error = typeof outcome === "string" ? undefined : outcome;
+      const line = `服务起来 ${wait}ms 后杀：${error ? `${took}ms 后报 ${error.code}「${error.message}」` : outcome}`;
+      console.log(line);
+      if (error?.code !== "runtime_unavailable" || !/虚拟机/.test(error.message) || took >= 5_000) wrong.push(line);
+      if (outcome === stuck) {
+        // napboxd 卡在这次启动上：换一个新的，收尾（after）才停得下来；后面的时机不跑了
+        creating.catch(() => {});
+        unsubscribe.abort();
+        await subscription.catch(() => {});
+        await daemon.stop("SIGKILL");
+        await startWatched();
+        break;
+      }
+      if (error) assert.equal(await stateOf(starting), "sleeping");
+      await client.down(starting);
+      await noVM();
+    }
+    assert.deepEqual(wrong, []);
   });
 });
 

@@ -102,6 +102,9 @@ Not supported, among others: `read_only`, `cpus`, `pids_limit`, `security_opt`, 
 - Environments cannot reach each other. Services inside one environment can, by service name.
 - Several networks are merged into one: all services of an environment can reach each other, and `internal: true` on a network has no effect. To cut off the internet, use `napbox egress none` for the whole environment.
 - `napbox run` gives the service its host ports, unlike `docker compose run`.
+- Variable substitution reads `.env` only from the directory of the first compose file. When you run from another directory and point at the file with `-f`, the `.env` in the directory you run from is not used for substitution (Docker reads it first); napbox only looks at `COMPOSE_FILE` in it.
+- `pull_policy: always` pulls only on a `napbox up` while the environment is not running. A second `up` on a running environment with unchanged compose does not pull, and neither do waking, restarting or `napbox reset`; they use the local image. To move to a new image, run `napbox sleep`, then `napbox up`.
+- All environments on the machine share one image store, where a tag points to one image. By default a local image is not pulled again, so tags stay put. But once an environment with `pull_policy: always` pulls a newer version of a tag (or the same tag is pulled again for another architecture), other environments that use that tag also switch to the new image the next time they wake, and anything their containers wrote outside volumes is lost. Use tags with a specific version to avoid this.
 - `exec` has no interactive terminal.
 - Builds cannot use your Docker login or local Docker images: `FROM` must be pullable from a public registry.
 - napbox does not export images. Package release images with another tool, such as Apple's `container`.

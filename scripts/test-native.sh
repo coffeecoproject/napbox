@@ -107,7 +107,7 @@ check "状态文件坏了：说明原因、不覆盖" sh -c "grep -q '状态文�
 # 登记的 worktree 要真的在，否则启动时会被当成删掉了回收
 fixrepo="$work/fixrepo"; git init -q "$fixrepo"; fixrepo="$(cd "$fixrepo" && pwd -P)"
 cat >"$state" <<JSON
-{"version":1,"environments":[{"name":"demo/main","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":[],"egress":"open",
+{"version":2,"environments":[{"name":"demo/main","hostname":"main--demo.localhost","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":[],"egress":"open",
  "ports":[{"service":"db","containerPort":5432,"hostPort":38431},{"service":"api","containerPort":3100,"hostPort":38432}],
  "hostPorts":[{"name":"server","hostPort":38433}]}]}
 JSON
@@ -129,9 +129,9 @@ rm -f "$state"
 echo "worktree 删掉后回收、保留期满的数据清理"
 # 两个环境：demo/main 的 worktree 在；demo/gone 的 worktree 已经删掉（napboxd 没运行时删的）
 cat >"$state" <<JSON
-{"version":1,"environments":[
- {"name":"demo/main","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":[],"egress":"open","ports":[]},
- {"name":"demo/gone","project":"demo","mainRepository":"$fixrepo","worktree":"$work/gone-wt","owner":{"worktree":{}},"completedServices":[],"egress":"open",
+{"version":2,"environments":[
+ {"name":"demo/main","hostname":"main--demo.localhost","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":[],"egress":"open","ports":[]},
+ {"name":"demo/gone","hostname":"gone--demo.localhost","project":"demo","mainRepository":"$fixrepo","worktree":"$work/gone-wt","owner":{"worktree":{}},"completedServices":[],"egress":"open",
   "ports":[{"service":"db","containerPort":5432,"hostPort":38441}]}]}
 JSON
 recycled="$NAPBOX_SUPPORT_DIR/recycled"
@@ -174,14 +174,14 @@ echo pg >"$envs/$main_id/volumes/pg.ext4"; echo kept >"$envs/$main_id/volumes/ot
 echo copied-pg >"$envs/$seed_id/volumes/pg.ext4"; echo copied-s3 >"$envs/$seed_id/incoming/s3.ext4"; echo old-s3 >"$envs/$seed_id/volumes/s3.ext4"
 echo stray >"$envs/$main_id/incoming/pg.ext4"
 cat >"$state" <<JSON
-{"version":1,"environments":[
- {"name":"demo/main","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":["migrate"],"egress":"open","ports":[],
+{"version":2,"environments":[
+ {"name":"demo/main","hostname":"main--demo.localhost","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":["migrate"],"egress":"open","ports":[],
   "pending":{"replaceVolumes":{"volumes":["pg"]}}},
- {"name":"demo/seeded","worktree":"$work/seeded","owner":{"caller":{"id":"demo"}},"completedServices":["migrate"],"egress":"open","ports":[],
+ {"name":"demo/seeded","hostname":"seeded--demo.localhost","worktree":"$work/seeded","owner":{"caller":{"id":"demo"}},"completedServices":["migrate"],"egress":"open","ports":[],
   "pending":{"replaceVolumes":{"volumes":["pg","s3"],"seed":{"environment":"demo/main","takenAt":"2026-11-15T00:00:00Z","volumes":["pg","s3"]}}}},
- {"name":"codeos/half","worktree":"$work/half","owner":{"caller":{"id":"codeos"}},"completedServices":["migrate"],"egress":"open",
+ {"name":"codeos/half","hostname":"half--codeos.localhost","worktree":"$work/half","owner":{"caller":{"id":"codeos"}},"completedServices":["migrate"],"egress":"open",
   "ports":[{"service":"db","containerPort":5432,"hostPort":38451}],"pending":{"recycle":{"reason":"codeos 销毁","discardData":false}}},
- {"name":"codeos/moved","worktree":"$work/moved","owner":{"caller":{"id":"codeos"}},"completedServices":[],"egress":"open",
+ {"name":"codeos/moved","hostname":"moved--codeos.localhost","worktree":"$work/moved","owner":{"caller":{"id":"codeos"}},"completedServices":[],"egress":"open",
   "ports":[{"service":"db","containerPort":5432,"hostPort":38452}],"pending":{"recycle":{"reason":"codeos 销毁","discardData":true}}}]}
 JSON
 start_daemon "$work/s5.log"; s5=$started
@@ -210,8 +210,8 @@ stuck_id="$(id_of codeos/stuck)"
 mkdir -p "$envs/$stuck_id/volumes" "$envs/$stuck_id/incoming" "$recycled"
 echo old >"$envs/$stuck_id/volumes/pg.ext4"; echo copied >"$envs/$stuck_id/incoming/pg.ext4"
 cat >"$state" <<JSON
-{"version":1,"environments":[
- {"name":"codeos/stuck","worktree":"$work/stuck","owner":{"caller":{"id":"codeos"}},"completedServices":["migrate"],"egress":"open","ports":[],
+{"version":2,"environments":[
+ {"name":"codeos/stuck","hostname":"stuck--codeos.localhost","worktree":"$work/stuck","owner":{"caller":{"id":"codeos"}},"completedServices":["migrate"],"egress":"open","ports":[],
   "pending":{"replaceVolumes":{"volumes":["pg"],"seed":{"environment":"codeos/other","takenAt":"2026-11-15T00:00:00Z","volumes":["pg"]}}}}]}
 JSON
 chmod 555 "$recycled" # 旧卷移不进 recycled
@@ -235,10 +235,10 @@ copy="$work/copy-a/repo"; mkdir -p "$copy"; git init -q "$copy"; copy="$(cd "$co
 other="$work/copy-b/repo"; mkdir -p "$other"; other="$(cd "$other" && pwd -P)"
 printf 'services:\n  app:\n    image: alpine:3.20\n' | tee "$copy/compose.yaml" >"$other/compose.yaml"
 cat >"$state" <<JSON
-{"version":1,"environments":[
- {"name":"demo/main","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":[],"egress":"open","ports":[]},
- {"name":"codeos/goal-1-work","worktree":"$copy","owner":{"caller":{"id":"codeos"}},"completedServices":[],"egress":"open","ports":[]},
- {"name":"codeos/goal-2-gone","worktree":"$work/never-existed","owner":{"caller":{"id":"codeos"}},"completedServices":[],"egress":"open","ports":[]}]}
+{"version":2,"environments":[
+ {"name":"demo/main","hostname":"main--demo.localhost","project":"demo","mainRepository":"$fixrepo","worktree":"$fixrepo","owner":{"worktree":{}},"completedServices":[],"egress":"open","ports":[]},
+ {"name":"codeos/goal-1-work","hostname":"goal-1-work--codeos.localhost","worktree":"$copy","owner":{"caller":{"id":"codeos"}},"completedServices":[],"egress":"open","ports":[]},
+ {"name":"codeos/goal-2-gone","hostname":"goal-2-gone--codeos.localhost","worktree":"$work/never-existed","owner":{"caller":{"id":"codeos"}},"completedServices":[],"egress":"open","ports":[]}]}
 JSON
 start_daemon "$work/s4.log"; s4=$started
 wait_socket

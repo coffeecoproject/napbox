@@ -3,9 +3,9 @@ import Foundation
 import NapboxProtocol
 
 public struct NapboxState: Codable, Equatable, Sendable {
-    /// 状态文件格式的版本。格式变了（登记或 compose 模型加了必须有的字段、改了字段）就加 1，并在 StateStore.migrate
-    /// 里写上从上一版怎么迁过来；比当前新的、没写迁移的报错说明，不去猜。加可以不写的字段不加 1：旧文件里没有，读出来就是没有
-    /// 第 2 版：登记加了主机名（hostname）
+    /// 状态文件格式的版本。格式变了（登记或 compose 模型加了必须有的字段、改了字段）就加 1。只认当前这一版：
+    /// 别的版本（更旧的、更新的）报错说明，不迁移、不去猜、不覆盖。加可以不写的字段不加 1：旧文件里没有，读出来就是没有
+    /// 第 2 版：登记加了主机名（hostname）。第 1 版是 napbox 0.1.8 和更早的版本写的
     static let currentVersion = 2
     public var version = currentVersion
     public var environments: [EnvironmentRecord] = []
@@ -186,7 +186,7 @@ public final class StateStore {
         var version: Int
     }
 
-    /// 文件不存在就从空状态开始；旧版本的先迁到当前版本再写回；文件读不了、坏了或版本认不得直接报错，不覆盖（里面有端口登记）。
+    /// 文件不存在就从空状态开始；文件读不了、坏了或不是当前这一版格式的直接报错，不覆盖（里面有端口登记）。
     public init(url: URL) throws(NapboxError) {
         self.url = url
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -200,47 +200,19 @@ public final class StateStore {
         } catch {
             throw NapboxError(.stateCorrupted, "状态文件 \(url.path) 读不了（\(error.localizedDescription)）。\(keep)")
         }
-        let migrated: Bool
         do {
             let version = try DiskJSON.decoder.decode(Header.self, from: data).version
-            guard (1...NapboxState.currentVersion).contains(version) else {
-                throw NapboxError(.stateCorrupted, "状态文件 \(url.path) 是第 \(version) 版格式，这个 napboxd 只认第 1 到第 \(NapboxState.currentVersion) 版。\(keep)")
+            guard version == NapboxState.currentVersion else {
+                // 旧格式不迁移。第 1 版（0.1.8 和更早）最后一个会迁它的版本是 0.1.13
+                let old = version == 1 ? "第 1 版是 napbox 0.1.8 和更早的版本写的，现在不再迁移：先用 0.1.9 到 0.1.13 之间的版本运行一次 napboxd（会升成第 2 版），再换回这个版本。" : ""
+                throw NapboxError(.stateCorrupted, "状态文件 \(url.path) 是第 \(version) 版格式，这个 napboxd 只认第 \(NapboxState.currentVersion) 版。\(old)\(keep)")
             }
-            var current = data
-            for from in version..<NapboxState.currentVersion { current = try Self.migrate(current, from: from) }
-            state = try DiskJSON.decoder.decode(NapboxState.self, from: current)
-            migrated = version != NapboxState.currentVersion
+            state = try DiskJSON.decoder.decode(NapboxState.self, from: data)
         } catch let error as NapboxError {
             throw error
         } catch {
             throw NapboxError(.stateCorrupted, "状态文件 \(url.path) 读不了（\(error)）。\(keep)")
         }
-        if migrated { try update { _ in } }
-    }
-
-    /// 第 from 版的状态文件迁到下一版
-    static func migrate(_ data: Data, from version: Int) throws -> Data {
-        guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw NapboxError(.stateCorrupted, "最外层不是对象")
-        }
-        switch version {
-        case 1:
-            // 加主机名：开发环境先分，临时环境接在它所属开发环境分到的后面（Hostnames.make）
-            var environments = root["environments"] as? [[String: Any]] ?? []
-            var registered: [String: String] = [:]
-            let temporary = environments.map { $0["temporary"] as? String }
-            for i in temporary.indices.filter({ temporary[$0] == nil }) + temporary.indices.filter({ temporary[$0] != nil }) {
-                guard let name = environments[i]["name"] as? String else { throw NapboxError(.stateCorrupted, "有个环境没有名字") }
-                let hostname = Hostnames.make(name: name, temporary: temporary[i], registered: registered)
-                environments[i]["hostname"] = hostname
-                registered[name] = hostname
-            }
-            root["environments"] = environments
-        default:
-            throw NapboxError(.internalError, "没有第 \(version) 版的迁移")
-        }
-        root["version"] = version + 1
-        return try JSONSerialization.data(withJSONObject: root)
     }
 
     /// 修改并立即写回磁盘（先写临时文件再改名，不会写一半）。body 抛错时什么都不改。

@@ -386,6 +386,28 @@ extension [ComposeIssue] {
         #expect(try issues(["compose.yaml": "services:\n  napbox-runtime: {image: alpine, profiles: [off]}\n  a: {image: alpine}\n"]).isEmpty)
     }
 
+    /// 服务名、卷名会拼进宿主机上的路径：只收 Docker 给容器和卷起名的那些字符，别的读 compose 时就报错
+    @Test func serviceAndVolumeNamesFollowDockerRules() throws {
+        #expect(try issues(["compose.yaml": """
+        services:
+          Web.api_1-x: {image: alpine, volumes: ["Data.v_1-x:/data"]}
+          9lives: {image: alpine}
+        volumes:
+          Data.v_1-x:
+        """]).isEmpty)
+        let message = "只能用字母、数字和 . _ -，开头要是字母或数字（和 Docker 一样）"
+        for name in ["..", ".hidden", "_x", "-x", "a/b", "../up", "a b", "数据", "a:b"] {
+            let quoted = "\"\(name)\""
+            let service = try issues(["compose.yaml": "services:\n  \(quoted): {image: alpine}\n"])
+            #expect(service == [.invalid("services.\(name)：服务名\(message)")], "\(name)")
+            let volume = try issues(["compose.yaml": "services:\n  a: {image: alpine}\nvolumes:\n  \(quoted):\n"])
+            #expect(volume == [.invalid("volumes.\(name)：卷名\(message)")], "\(name)")
+        }
+        // 没启用的服务也查：名字不合规的 compose 整份不收
+        #expect(try issues(["compose.yaml": "services:\n  \"a/b\": {image: alpine, profiles: [off]}\n  a: {image: alpine}\n"])
+            == [.invalid("services.a/b：服务名\(message)")])
+    }
+
     @Test func dependencyProblems() throws {
         let found = try issues(["compose.yaml": """
         services:

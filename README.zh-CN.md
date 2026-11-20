@@ -102,6 +102,9 @@ npx napbox setup codex
 - 环境之间互相访问不到。同一个环境里的服务可以用服务名互相访问。
 - 多个网络合成一个：同一个环境里的服务都能互相访问，网络上写的 `internal: true` 不起作用。要断外网，用 `napbox egress none` 断整个环境的。
 - `napbox run` 的服务照常分配宿主机端口，和 `docker compose run` 不同。
+- 变量替换用的 `.env` 只读第一份 compose 文件所在目录里的那一份。在别的目录运行、用 `-f` 指过去时，运行目录的 `.env` 不参与变量替换（Docker 会先读它），napbox 只看它里面的 `COMPOSE_FILE`。
+- `pull_policy: always` 只在环境没在运行时的 `napbox up` 拉镜像。环境在运行、compose 没变时再 `up` 不拉，自动唤醒、重启、`napbox reset` 也不拉，用本地已有的。要换成新镜像，先 `napbox sleep` 再 `napbox up`。
+- 本机所有环境共用一个镜像库，一个标签只指向一份镜像。默认本地有就不拉，标签不会变；但一个环境用 `pull_policy: always` 把标签拉成了新版本（或者同一个标签又按另一种架构拉了一次）之后，用这个标签的其他环境下次唤醒也会换成新镜像，容器里写在数据卷之外的内容会丢。不想被影响就写带具体版本的标签。
 - `exec` 没有交互终端。
 - 构建时用不了本机 Docker 的登录信息和本地镜像：`FROM` 要能从公开仓库拉到。
 - napbox 不导出镜像，发布用的镜像要用别的工具打包，比如苹果的 `container`。

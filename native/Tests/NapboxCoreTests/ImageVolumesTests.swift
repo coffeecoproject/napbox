@@ -61,7 +61,8 @@ struct ImageVolumesTests {
         #expect(ComposeProject.anonymousVolumeService("_anon_db_nothexdigits") == nil)
     }
 
-    @Test func reservedPrefixIsRejected() throws {
+    /// compose 里的卷名要字母或数字开头（ComposeBuilder.validName），匿名卷的名字以 _ 开头，两边不会重名
+    @Test func composeVolumesCannotTakeAnonymousNames() throws {
         let found = try issues(["compose.yaml": """
             services:
               db:
@@ -70,6 +71,7 @@ struct ImageVolumesTests {
             volumes:
               _anon_db_x:
             """])
-        #expect(found.contains { "\($0)".contains("_anon_") })
+        #expect(found.mentions("volumes._anon_db_x：卷名只能用字母、数字和 . _ -"))
+        #expect(!ComposeBuilder.validName(ComposeProject.anonymousVolumeName(service: "db", path: "/data")))
     }
 }

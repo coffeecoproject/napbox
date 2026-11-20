@@ -46,9 +46,10 @@ struct ComposeBuilder {
             case "volumes":
                 for (name, v) in value.entries ?? [] {
                     volumes.append(name)
-                    // 这个开头留给 napbox 给镜像的 VOLUME 建的匿名卷（ImageVolumes.swift）
-                    if name.hasPrefix(ComposeProject.anonymousVolumePrefix) {
-                        issues.append(.invalid("volumes.\(name)：\(ComposeProject.anonymousVolumePrefix) 开头的卷名留给 napbox 的匿名卷，换个名字"))
+                    // 名字会拼进宿主机上的路径（volumes/<名字>.ext4）。napbox 给镜像的 VOLUME 建的匿名卷以 _ 开头
+                    // （ComposeProject.anonymousVolumePrefix），这条规则下不会和它重名
+                    if !Self.validName(name) {
+                        issues.append(.invalid("volumes.\(name)：卷名只能用字母、数字和 . _ -，开头要是字母或数字（和 Docker 一样）"))
                     }
                     for (k, _) in v.entries ?? [] where k != "name" {
                         issues.append(.unsupported("volumes.\(name).\(k)：命名卷只支持 name（由 napbox 按环境管理）"))
@@ -102,6 +103,10 @@ struct ComposeBuilder {
 
         var all: [(Service, profiles: [String])] = []
         for (name, value) in serviceEntries {
+            // 名字会拼进宿主机上的路径（rootfs/<名字>.ext4、logs/<名字>.log、populated/<名字>/）
+            if !Self.validName(name) {
+                issues.append(.invalid("services.\(name)：服务名只能用字母、数字和 . _ -，开头要是字母或数字（和 Docker 一样）"))
+            }
             if let s = service(name, value, volumes: Set(volumes), networks: networks, secrets: secrets) { all.append(s) }
         }
         if let run {
@@ -213,6 +218,16 @@ struct ComposeBuilder {
             return []
         }
         return result
+    }
+
+    /// 服务名、卷名：Docker 给容器和卷起名的规则，字母或数字开头，后面是字母、数字和 . _ -（都只算 ASCII）
+    static func validName(_ name: String) -> Bool {
+        func alphanumeric(_ c: UInt8) -> Bool {
+            (UInt8(ascii: "a")...UInt8(ascii: "z")).contains(c) || (UInt8(ascii: "A")...UInt8(ascii: "Z")).contains(c)
+                || (UInt8(ascii: "0")...UInt8(ascii: "9")).contains(c)
+        }
+        guard let first = name.utf8.first, alphanumeric(first) else { return false }
+        return name.utf8.allSatisfy { alphanumeric($0) || $0 == UInt8(ascii: ".") || $0 == UInt8(ascii: "_") || $0 == UInt8(ascii: "-") }
     }
 
     // MARK: - 单个服务

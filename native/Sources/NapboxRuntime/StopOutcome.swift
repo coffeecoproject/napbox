@@ -19,13 +19,17 @@ public struct StopOutcome: Sendable, Equatable {
     public var syncFailed = false
     /// 开始停之前虚拟机已经不在了（崩了或被关掉）：里面的服务都没机会正常退出
     public var vmGone = false
+    /// 最后一步（卸载磁盘、关虚拟机）报了错时是那个错误：磁盘有没有卸干净、虚拟机有没有关掉都不知道
+    public var shutdownFailed: String?
     /// 超过停环境的总时限、直接关掉了虚拟机时是那个时限（秒）
     public var timeLimit: Double?
 
-    public init(overdue: [Overdue] = [], syncFailed: Bool = false, vmGone: Bool = false, timeLimit: Double? = nil) {
+    public init(overdue: [Overdue] = [], syncFailed: Bool = false, vmGone: Bool = false, shutdownFailed: String? = nil,
+                timeLimit: Double? = nil) {
         self.overdue = overdue
         self.syncFailed = syncFailed
         self.vmGone = vmGone
+        self.shutdownFailed = shutdownFailed
         self.timeLimit = timeLimit
     }
 
@@ -40,6 +44,7 @@ public struct StopOutcome: Sendable, Equatable {
             parts.append("\(list)过了 stop_grace_period 还没退出，被强制结束；先看服务日志里停下那段为什么慢，确实要这么久的再在 compose 里设更长的 stop_grace_period")
         }
         if syncFailed { parts.append("存盘（sync）失败") }
+        if let shutdownFailed { parts.append("最后关虚拟机那一步报错：\(shutdownFailed)") }
         if let timeLimit { parts.append("停了 \(Self.seconds(timeLimit))还没停完，直接关掉了虚拟机") }
         return parts.isEmpty ? nil : parts.joined(separator: "；")
     }

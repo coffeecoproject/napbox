@@ -149,7 +149,7 @@ public actor RunningEnvironment {
     /// 这个环境之后的操作跟着排队。所以整个过程有总时限（stopTimeLimit），到时直接关掉虚拟机：
     /// 卡住的请求随之失败返回，pod.stop() 也就结束了。相当于断电，靠磁盘的日志恢复（第 2 节「napboxd 被强杀后的磁盘」）。
     /// 返回怎么停下的（StopOutcome）：虚拟机还在运行、服务都在 grace 时间内退出了、数据也存了盘（sync 成功），
-    /// 没有被直接关掉，才算正常停下。只有这样停下的，数据卷才是干净的，可以拍快照（x-napbox.seed）
+    /// 最后的 pod.stop() 没报错、没有被直接关掉，才算正常停下。只有这样停下的，数据卷才是干净的，可以拍快照（x-napbox.seed）
     /// - discarding：停完数据马上就删（临时环境销毁、调用方要求不保留数据）。不等服务收尾、不存盘，直接关掉虚拟机：
     ///   等它们落盘没有用。返回的 StopOutcome 是空的
     @discardableResult
@@ -172,7 +172,11 @@ public actor RunningEnvironment {
             }) {
                 outcome = await stopInside()
             }
-            if timedOut { outcome.timeLimit = limit }
+            if timedOut {
+                outcome.timeLimit = limit
+                // 虚拟机是这里直接关掉的，之后 pod.stop() 报的错就是这件事，不另记
+                outcome.shutdownFailed = nil
+            }
         }
         for w in watchers { w.cancel() }
         for log in logs.values { log.close() }
@@ -210,7 +214,12 @@ public actor RunningEnvironment {
         } else {
             outcome.vmGone = true
         }
-        try? await pod.stop()
+        do {
+            try await pod.stop()
+        } catch {
+            // 虚拟机已经不在了的，这一步本来就会报“不在运行”，上面记过了
+            if !outcome.vmGone { outcome.shutdownFailed = "\(error)" }
+        }
         return outcome
     }
 
@@ -225,6 +234,19 @@ public actor RunningEnvironment {
     /// - progress：每个服务就绪时告诉它（跳过的一次性服务一开始就算就绪）
     func startAll(_ project: ComposeProject, skipping: Set<String>, foreground: String? = nil, egress: EgressMode,
                   trace: RunTrace, progress: StartProgress) async throws(NapboxError) {
+        do throws(NapboxError) {
+            try await startSteps(project, skipping: skipping, foreground: foreground, egress: egress, trace: trace, progress: progress)
+        } catch {
+            // 虚拟机中途没了时，正在跑的那一步各报各的（对时失败、某个容器“启动失败…Stream unexpectedly closed”），
+            // 说的都不是原因。vmLost 半秒才更新一次，这里直接看状态。我们自己在停的（stopping）不算。
+            // 看 startSteps 开头存下的那个实例，不用再经 pod 取一次
+            if !stopping, let vm, vm.state != .running { throw NapboxError(.runtimeUnavailable, "启动过程中虚拟机意外停了") }
+            throw error
+        }
+    }
+
+    private func startSteps(_ project: ComposeProject, skipping: Set<String>, foreground: String?, egress: EgressMode,
+                            trace: RunTrace, progress: StartProgress) async throws(NapboxError) {
         vm = try? await pod.withVirtualMachineInstance { $0 }
         watchVM()
         self.project = project

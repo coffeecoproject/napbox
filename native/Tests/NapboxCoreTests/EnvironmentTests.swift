@@ -209,34 +209,6 @@ import NapboxProtocol
         }
     }
 
-    /// 第 1 版状态文件（登记里没有主机名）：读入时迁到第 2 版、马上写回。转写后撞名的开发环境依次加 -2，
-    /// 临时环境排在前面也是先分开发环境，再接在各自开发环境分到的主机名前面
-    @Test func storeMigratesVersion1() throws {
-        try withProject(["x": ""]) { dir in
-            let url = dir.appending(path: "state.json")
-            var old = NapboxState()
-            var tempOfUnderscore = record("p/feat_x/e2e", project: "p", repo: "/p", worktree: "/p/a")
-            tempOfUnderscore.temporary = "e2e"
-            var tempOfDash = record("p/feat-x/e2e", project: "p", repo: "/p", worktree: "/p/b")
-            tempOfDash.temporary = "e2e"
-            old.environments = [tempOfDash, tempOfUnderscore, record("p/feat_x", project: "p", repo: "/p", worktree: "/p/a"),
-                                record("p/feat-x", project: "p", repo: "/p", worktree: "/p/b")]
-            var root = try #require(try JSONSerialization.jsonObject(with: try DiskJSON.encoder.encode(old)) as? [String: Any])
-            root["version"] = 1
-            root["environments"] = (root["environments"] as? [[String: Any]])?.map { $0.filter { $0.key != "hostname" } }
-            try JSONSerialization.data(withJSONObject: root).write(to: url)
-
-            let store = try StateStore(url: url)
-            #expect(store.state.version == 2)
-            #expect(store.state.environments.map(\.hostname) == [
-                "e2e--feat-x--p-2.localhost", "e2e--feat-x--p.localhost", "feat-x--p.localhost", "feat-x--p-2.localhost",
-            ])
-            #expect(try StateStore(url: url).state == store.state)
-            let written = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
-            #expect(written["version"] as? Int == 2)
-        }
-    }
-
     @Test func storeRoundTripAndCorruption() throws {
         try withProject(["x": ""]) { dir in
             let url = dir.appending(path: "state.json")
@@ -264,11 +236,16 @@ import NapboxProtocol
             try "{oops".write(to: url, atomically: true, encoding: .utf8)
             #expect { try StateStore(url: url) } throws: { ($0 as? NapboxError)?.code == "state_corrupted" }
 
-            // 格式版本对不上：说清楚是版本的问题，不当成别的错
-            try #"{"version": 3, "environments": []}"#.write(to: url, atomically: true, encoding: .utf8)
-            #expect { try StateStore(url: url) } throws: { error in
-                guard let e = error as? NapboxError else { return false }
-                return e.code == "state_corrupted" && e.message.contains("第 3 版") && e.message.contains("只认第 1 到第 2 版")
+            // 格式版本对不上（更新的、更旧的都一样）：说清楚是版本的问题，不当成别的错；不迁移，文件原样留着
+            for (version, hint) in [(3, "只认第 2 版"), (1, "先用 0.1.9 到 0.1.13 之间的版本运行一次 napboxd"), (0, "只认第 2 版")] {
+                let text = #"{"version": \#(version), "environments": []}"#
+                try text.write(to: url, atomically: true, encoding: .utf8)
+                #expect { try StateStore(url: url) } throws: { error in
+                    guard let e = error as? NapboxError else { return false }
+                    return e.code == "state_corrupted" && e.message.contains("第 \(version) 版") && e.message.contains("只认第 2 版")
+                        && e.message.contains(hint) && e.message.contains("不会覆盖")
+                }
+                #expect(try String(contentsOf: url, encoding: .utf8) == text)
             }
         }
     }
