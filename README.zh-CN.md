@@ -8,7 +8,7 @@ napbox 按项目的 compose 文件，给每个 git worktree 起一套隔离的�
 
 底层是苹果开源的 [Containerization](https://github.com/apple/containerization)：一个环境一台轻量的 Linux 虚拟机，环境里的服务都在这台虚拟机里。
 
-**状态：0.1.13，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
+**状态：0.1.14，早期版本。** 已经在一台电脑上给好几个项目日常使用（带 PostGIS 的 PostgreSQL、Redis、MinIO、Go 和 Node 后端、nginx 前端），但还会有不顺手的地方。
 
 ## 为什么
 
@@ -107,7 +107,6 @@ npx napbox setup codex
 - 本机所有环境共用一个镜像库，一个标签只指向一份镜像。默认本地有就不拉，标签不会变；但一个环境用 `pull_policy: always` 把标签拉成了新版本（或者同一个标签又按另一种架构拉了一次）之后，用这个标签的其他环境下次唤醒也会换成新镜像，容器里写在数据卷之外的内容会丢。不想被影响就写带具体版本的标签。
 - `exec` 没有交互终端。
 - 构建时用不了本机 Docker 的登录信息和本地镜像：`FROM` 要能从公开仓库拉到。
-- napbox 不导出镜像，发布用的镜像要用别的工具打包，比如苹果的 `container`。
 - 内存只在环境休眠时才还给 macOS。
 - 虚拟机用系统共用的 NAT 网，网段是 `192.168.64.0/24`。这个网段被别的程序的虚拟机网络占了时，起环境报 `address_unavailable`（连不上网关）。常见两种：苹果 `container` 没固定网段，在 `~/.config/container/config.toml` 写 `[network]` `subnet = "192.168.65.0/24"` 再重启它；用虚拟机网络的程序崩溃后系统留着网段不放，运行 `sudo killall InternetSharing` 或重启电脑。
 - 虚拟机没有交换空间。服务卡在内存上（到了自己的上限，或整个环境的内存用完）时，napbox 结束占内存最多的那个进程，在服务的日志里写明原因，不让它一直卡着。

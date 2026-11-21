@@ -8,7 +8,7 @@ napbox reads a project's compose file and gives every git worktree its own isola
 
 It is built on Apple's open-source [Containerization](https://github.com/apple/containerization) framework: one lightweight Linux VM per environment, with all its services in it.
 
-**Status: 0.1.13, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
+**Status: 0.1.14, early.** Used daily on one machine for several projects (PostgreSQL with PostGIS, Redis, MinIO, Go and Node backends, nginx front ends). Expect rough edges.
 
 ## Why
 
@@ -107,7 +107,6 @@ Not supported, among others: `read_only`, `cpus`, `pids_limit`, `security_opt`, 
 - All environments on the machine share one image store, where a tag points to one image. By default a local image is not pulled again, so tags stay put. But once an environment with `pull_policy: always` pulls a newer version of a tag (or the same tag is pulled again for another architecture), other environments that use that tag also switch to the new image the next time they wake, and anything their containers wrote outside volumes is lost. Use tags with a specific version to avoid this.
 - `exec` has no interactive terminal.
 - Builds cannot use your Docker login or local Docker images: `FROM` must be pullable from a public registry.
-- napbox does not export images. Package release images with another tool, such as Apple's `container`.
 - Memory is returned to macOS only when an environment sleeps.
 - VMs use the system's shared NAT network on `192.168.64.0/24`. If another program's VM network holds that subnet, starting an environment fails with `address_unavailable` (gateway unreachable). Two usual causes: Apple's `container` without a fixed subnet (set `[network]` `subnet = "192.168.65.0/24"` in `~/.config/container/config.toml` and restart it), or a program that crashed while using a VM network and left its subnet stranded (run `sudo killall InternetSharing`, or restart the Mac).
 - There is no swap in the virtual machine. When a service stalls on memory (at its own limit, or with the whole environment's memory used up), napbox ends the process using the most memory and says why in the service's log, instead of letting it hang.
